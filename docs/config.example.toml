@@ -1,0 +1,87 @@
+# tcp-wake configuration — DRAFT
+# ---------------------------------------------------------------------------
+# Every key is optional; a missing key falls back to the default shown.
+# Any key can be overridden by its environment variable, which wins over this
+# file (ADR-0011). Environment variables are what a compose file sets.
+#
+#   file:  /etc/tcp-wake/config.toml
+#   env:   TCPWAKE_<KEY>, upper-cased with underscores
+#
+# Search order:
+#   1. --config PATH
+#   2. $TCPWAKE_CONFIG
+#   3. /etc/tcp-wake/config.toml
+#   4. ./config.toml next to the binary
+#
+# A missing or unreadable file prevents start, and the failure is reported
+# (ADR-0011).
+# ---------------------------------------------------------------------------
+
+# Where the existing routing forwards hypha-bound requests (ADR-0002, ADR-0006).
+# Plain HTTP: TLS and client authentication stay at the routing layer.
+# MUST NOT be reachable from outside hyperion, or prompts travel in the clear
+# (R-7).
+listen_address = "127.0.0.1:8080"
+
+# hypha's HTTP listener — the target of both the probe and every forwarded
+# request. Named "target" rather than "origin" because in a proxy, "origin"
+# can be read from either direction, while "target" is unambiguously hypha.
+# With host networking this is the same address the routing layer uses.
+target_address = "http://hypha.lan:8080"
+
+# Path probed on hypha. Ready is HTTP 200 with body {"status":"ok"} (IF-3).
+# In router mode this answers before any model is loaded (C-5).
+health_path = "/health"
+
+# Probe cadence while a request is pending (ADR-0007). Worst-case detection is
+# one interval plus one timeout, about 3 s, well inside NFR-1's 120 s budget.
+probe_interval = "2s"
+probe_timeout  = "1s"
+
+# How long a request may be held, measured from its arrival and never restarted
+# by a wake attempt (FR-8). On expiry the client receives 504 naming this bound.
+wait_bound = "120s"
+
+# Executed once for each request received while hypha is not healthy (FR-3).
+# Must be setuid-root and owned by root, and must still carry the bit inside the
+# running container — see the deployment note below (ADR-0005, R-1).
+# A non-zero exit gives that request's client a 500 immediately (FR-17).
+wake_command = "/usr/local/bin/wol-send"
+
+# Maximum request body retained, above which the client receives 413 (FR-20).
+# Bodies are held in memory, so this is also the per-request memory ceiling
+# (ADR-0004). There is no cap on the number of held requests (ADR-0012).
+held_body_cap = "64MiB"
+
+# ---------------------------------------------------------------------------
+# Environment overrides
+# ---------------------------------------------------------------------------
+# TCPWAKE_LISTEN_ADDRESS, TCPWAKE_TARGET_ADDRESS, TCPWAKE_HEALTH_PATH,
+# TCPWAKE_PROBE_INTERVAL, TCPWAKE_PROBE_TIMEOUT, TCPWAKE_WAIT_BOUND,
+# TCPWAKE_WAKE_COMMAND, TCPWAKE_HELD_BODY_CAP
+#
+# Docker Compose example:
+#
+#   services:
+#     tcp-wake:
+#       image: tcp-wake:latest
+#       network_mode: host                    # ADR-0003
+#       volumes:
+#         - /usr/local/bin/wol-send:/usr/local/bin/wol-send:ro
+#       environment:
+#         TCPWAKE_TARGET_ADDRESS: "http://hypha.lan:8080"
+#         TCPWAKE_WAIT_BOUND: "180s"
+#
+# ---------------------------------------------------------------------------
+# Deployment note — the setuid bit (R-1)
+# ---------------------------------------------------------------------------
+# The wake command is bind-mounted from the host. The mount MUST NOT be nosuid,
+# and the container runtime must not strip setuid, or the wake path fails while
+# the host's file mode still reads 4755. Verify from inside the running
+# container, not on the host:
+#
+#   docker exec tcp-wake ls -l /usr/local/bin/wol-send     # expect 4755 root root
+#   docker exec tcp-wake id                                # expect a non-root uid
+#
+# Durations are Go duration strings ("120s", "2s", "500ms"). Sizes accept an
+# IEC suffix ("64MiB", "1GiB").
