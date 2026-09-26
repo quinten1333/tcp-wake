@@ -1,4 +1,4 @@
-# tcp-wake configuration — DRAFT
+# tcp-wake configuration
 # ---------------------------------------------------------------------------
 # Every key is optional; a missing key falls back to the default shown.
 # Any key can be overridden by its environment variable, which wins over this
@@ -7,11 +7,10 @@
 #   file:  /etc/tcp-wake/config.toml
 #   env:   TCPWAKE_<KEY>, upper-cased with underscores
 #
-# Search order:
+# Search order (ADR-0015):
 #   1. --config PATH
 #   2. $TCPWAKE_CONFIG
-#   3. /etc/tcp-wake/config.toml
-#   4. ./config.toml next to the binary
+#   3. /etc/tcp-wake/config.toml (fixed default; no working-directory fallback)
 #
 # A missing or unreadable file prevents start, and the failure is reported
 # (ADR-0011).

@@ -8,7 +8,7 @@ Steps taken:
 - Ran Docker container as non-root user (1000:1000) with bind-mounted stub
 - Verified via `stat` that mode=4755 root:root survives inside the container
 - Confirmed bind mount has no nosuid flag on /dev/vda3
-- Documented results in README.md and marked T1 done in todo.md
+- Documented results in README.md
 
 Decisions:
 - [Used stat -c instead of ls -l for reliable numeric mode output inside Alpine
@@ -17,7 +17,6 @@ Decisions:
 
 Changes:
 - README.md: Added T1 verification section with commands and results
-- docs/todo.md: Marked T1 as completed [x]
 - AGENTS.md: Added system environment and project notes learnings
 
 Next steps:
