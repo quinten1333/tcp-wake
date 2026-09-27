@@ -198,3 +198,42 @@ Next steps:
 - T5 — Wake trigger: exec `wake_command` once per triggering request, report its exit status
 - T6 — Wait-bound timer measured from arrival and never restarted
 - T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
+
+## [3] Listener and Intake — accept requests and retain them byte-exactly under the cap
+
+Implemented the entry of the request path in a new `internal/proxy` package so held, woken, and forwarded requests have a byte-exact source. The Listener accepts on `listen_address`, Intake retains one request as the exact wire bytes the client sent, and the HeldSet tracks what is currently held, satisfying FR-2/6/7/13/20, IF-1, and NFR-4. Framing is detected without parsing: only `Content-Length`/`Transfer-Encoding` are inspected, so header order and casing survive (ADR-0004), and the body cap gets the shared ADR-0014 413. A client close is observed by a blocking `Read` rather than a deadline, because NFR-4 forbids deadlines on held connections. `cmd/tcp-wake` now runs the listener with a hold-only handler, ready for T4/T5/T7 to replace it.
+
+Steps taken:
+- Added `request.go` with `Pending` (exact `Bytes`, `Arrival`, idempotent `Discard()`/`Discarded()`).
+- Added `heldset.go` with a mutex-guarded, uncapped `HeldSet` and `CloseAll` drain.
+- Added `intake.go` reading header lines with `ReadBytes('\n')` (nothing read ahead), framing-only field inspection, verbatim exact/chunked body reads, and body-byte cap enforcement.
+- Added `errors.go` with the shared ADR-0014 JSON writer for the 413 naming `held_body_cap`.
+- Added `listener.go` with injectable `net.Listen`, per-connection goroutine, blocking-Read close watcher, and context shutdown.
+- Wired `cmd/tcp-wake/main.go` to serve with a hold-only handler.
+- Wrote 13 tests and ran four mutations; smoke-tested the binary holds a request with zero response bytes.
+
+Decisions:
+- [Retain raw wire bytes and inspect framing only; never parse into a request object.
+- [Detect client close with a blocking `Read`, not a deadline, to keep NFR-4.
+- [Emit the 413 in the ADR-0014 envelope now, so T8 reuses one writer instead of rewriting.
+- [Close the connection with no synthetic response on a framing error; the four JSON bodies are the only responses (ADR-0009).
+- [Measure the cap on body bytes, per FR-20 and the `held_body_cap` comment.
+- [Host Listener, Intake, and HeldSet together in `internal/proxy` to avoid import cycles and a split owner for the held set.
+
+Changes:
+- internal/proxy/request.go: new `Pending` type with discard signalling
+- internal/proxy/heldset.go: new `HeldSet`
+- internal/proxy/intake.go: verbatim intake, framing detection, cap enforcement
+- internal/proxy/errors.go: shared ADR-0014 error writer (413 used, T8 reuses)
+- internal/proxy/listener.go: listener, per-connection serve, close watcher, shutdown
+- internal/proxy/intake_test.go, listener_test.go, deadline_test.go, helpers_test.go: 13 tests named for their requirement IDs
+- cmd/tcp-wake/main.go: runs the listener with a hold-only handler (T4/T5/T7 replace it)
+- docs/implementation-plan.md: ticked T3
+- docs/log.md: appended the T3 entries
+- AGENTS.md: recorded the intake/framing, close-detection, cap-scope, and test-wiring learnings
+
+Next steps:
+- T4 — Health state and Probe against `health_path` at `probe_interval`/`probe_timeout`
+- T5 — Wake trigger: exec `wake_command` once per triggering request, report its exit status
+- T6 — Wait-bound timer measured from arrival and never restarted
+- T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
