@@ -53,9 +53,18 @@ func newPipePendingBytes(t *testing.T, raw string) (*Pending, net.Conn) {
 
 // startListener runs a Listener bound to an ephemeral loopback port, returning
 // it and the address a client can dial. The listener is cancelled on cleanup.
+// Its logger discards, since only the 413 path logs from the listener; tests
+// that assert that line use startListenerLogged.
 func startListener(t *testing.T, cfg *config.Config, h Handler) (*Listener, string) {
 	t.Helper()
-	l := NewListener(cfg, h, NewLogger(io.Discard))
+	return startListenerLogged(t, cfg, h, NewLogger(io.Discard))
+}
+
+// startListenerLogged is startListener with a chosen logger, so a test can
+// assert the listener's own error line (the 413).
+func startListenerLogged(t *testing.T, cfg *config.Config, h Handler, logger *Logger) (*Listener, string) {
+	t.Helper()
+	l := NewListener(cfg, h, logger)
 	addrCh := make(chan string, 1)
 	l.listen = func(network, address string) (net.Listener, error) {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
