@@ -31,12 +31,13 @@ func main() {
 	defer prober.Close()
 	logger := proxy.NewLogger(os.Stdout)
 	wake := proxy.NewWakeTrigger(cfg)
+	forward, err := proxy.NewForwarder(cfg.TargetAddress)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
-	// TODO(T6, T7): extend Pipeline.Handle with the wait-bound timer and the
-	// forwarder. Until then a held request is released when the target becomes
-	// healthy or its client disconnects, and no response bytes are written
-	// (FR-2, FR-6).
-	pl := proxy.NewPipeline(ctx, cfg.WaitBound, health, prober, wake, logger)
+	pl := proxy.NewPipeline(ctx, cfg.WaitBound, health, prober, wake, forward, logger)
 	listener := proxy.NewListener(cfg, pl.Handle)
 
 	if err := listener.Serve(ctx); err != nil {

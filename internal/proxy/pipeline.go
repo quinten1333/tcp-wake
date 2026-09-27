@@ -9,10 +9,9 @@ import (
 )
 
 // Pipeline is the request path in the order RS-2 specifies: a request that
-// arrives while the target is not healthy wakes it, and every request then
-// holds until the target is healthy, the wait bound elapses, or the client goes
-// away. T7 adds the forwarder to Handle; it extends this type rather than
-// replacing it.
+// arrives while the target is not healthy wakes it, then every request holds
+// until the target is healthy, the wait bound elapses, or the client goes away,
+// and a request that becomes healthy is forwarded to the target.
 type Pipeline struct {
 	ctx context.Context
 	// waitBound is how long a request may be held, measured from its arrival
@@ -22,19 +21,21 @@ type Pipeline struct {
 	health    *Health
 	prober    *Prober
 	wake      *WakeTrigger
+	forward   *Forwarder
 	logger    *Logger
 }
 
 // NewPipeline wires the request path. ctx is the process context: it cancels an
 // in-flight wake command and bounds the wait for health on shutdown. waitBound
-// is the configured hold limit (FR-8); the forwarder joins in T7.
-func NewPipeline(ctx context.Context, waitBound time.Duration, health *Health, prober *Prober, wake *WakeTrigger, logger *Logger) *Pipeline {
+// is the configured hold limit (FR-8).
+func NewPipeline(ctx context.Context, waitBound time.Duration, health *Health, prober *Prober, wake *WakeTrigger, forward *Forwarder, logger *Logger) *Pipeline {
 	return &Pipeline{
 		ctx:       ctx,
 		waitBound: waitBound,
 		health:    health,
 		prober:    prober,
 		wake:      wake,
+		forward:   forward,
 		logger:    logger,
 	}
 }
@@ -66,6 +67,16 @@ func (pl *Pipeline) Handle(p *Pending) {
 	defer cancel()
 
 	if pl.health.WaitHealthyOr(waitCtx, p.Discarded()) {
+		// The target is believed healthy: forward on this request's own
+		// upstream connection (FR-4). A request that arrived healthy reaches
+		// here with no wake and no wait (FR-1). A transport-level failure is
+		// the only case a forward can answer, and it also repairs the belief by
+		// a probe rather than by inference (FR-18, FR-19, ADR-0008).
+		if err := pl.forward.Forward(p); err != nil {
+			writeError(p.Conn, http.StatusBadGateway, "target",
+				fmt.Sprintf("target %s is unreachable: %v", pl.forward.Address(), err), "")
+			pl.prober.ProbeNow(pl.ctx)
+		}
 		return
 	}
 

@@ -38,6 +38,19 @@ func intakeOnce(t *testing.T, req string, limit config.ByteSize) *Pending {
 	return p
 }
 
+// newPipePendingBytes returns a Pending whose retained bytes are raw and whose
+// client side is the other end of a net.Pipe, so a test can read the response.
+func newPipePendingBytes(t *testing.T, raw string) (*Pending, net.Conn) {
+	t.Helper()
+	client, server := net.Pipe()
+	t.Cleanup(func() {
+		client.Close()
+		server.Close()
+	})
+	p := newPending(server, bufio.NewReader(server), []byte(raw))
+	return p, client
+}
+
 // startListener runs a Listener bound to an ephemeral loopback port, returning
 // it and the address a client can dial. The listener is cancelled on cleanup.
 func startListener(t *testing.T, cfg *config.Config, h Handler) (*Listener, string) {

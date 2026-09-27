@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bufio"
 	"context"
 	"io"
 	"net"
@@ -14,13 +13,7 @@ import (
 // net.Pipe, so a test can read the response the pipeline writes.
 func newPipePending(t *testing.T) (*Pending, net.Conn) {
 	t.Helper()
-	client, server := net.Pipe()
-	t.Cleanup(func() {
-		client.Close()
-		server.Close()
-	})
-	p := newPending(server, bufio.NewReader(server), []byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
-	return p, client
+	return newPipePendingBytes(t, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
 }
 
 // wakeStub is a wake trigger for a command that exits cleanly, so the FR-8
@@ -94,7 +87,7 @@ func notReadyProber(t *testing.T, health *Health) *Prober {
 func TestFR8WaitBoundExpiryGets504NamingBound(t *testing.T) {
 	health := NewHealth()
 	pl := NewPipeline(context.Background(), 150*time.Millisecond, health,
-		notReadyProber(t, health), wakeStub(t), NewLogger(io.Discard))
+		notReadyProber(t, health), wakeStub(t), testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
 
 	p, client := newPipePending(t)
 	h := startHandle(pl, p, client)
@@ -121,7 +114,7 @@ func TestFR8WaitBoundExpiryGets504NamingBound(t *testing.T) {
 func TestFR8TimerMeasuredFromArrival(t *testing.T) {
 	health := NewHealth()
 	pl := NewPipeline(context.Background(), time.Second, health,
-		notReadyProber(t, health), wakeStub(t), NewLogger(io.Discard))
+		notReadyProber(t, health), wakeStub(t), testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
 
 	p, client := newPipePending(t)
 	p.Arrival = time.Now().Add(-900 * time.Millisecond) // ~100ms left
@@ -142,7 +135,7 @@ func TestFR8TimerMeasuredFromArrival(t *testing.T) {
 func TestFR8SecondWakeDoesNotExtend(t *testing.T) {
 	health := NewHealth()
 	pl := NewPipeline(context.Background(), 500*time.Millisecond, health,
-		notReadyProber(t, health), wakeStub(t), NewLogger(io.Discard))
+		notReadyProber(t, health), wakeStub(t), testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
 
 	p, client := newPipePending(t)
 	h := startHandle(pl, p, client)
@@ -167,7 +160,7 @@ func TestFR8SecondWakeDoesNotExtend(t *testing.T) {
 func TestFR8ClientDisconnectGetsNoResponse(t *testing.T) {
 	health := NewHealth()
 	pl := NewPipeline(context.Background(), 5*time.Second, health,
-		notReadyProber(t, health), wakeStub(t), NewLogger(io.Discard))
+		notReadyProber(t, health), wakeStub(t), testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
 
 	p, client := newPipePending(t)
 	h := startHandle(pl, p, client)
@@ -190,7 +183,7 @@ func TestFR8ClientDisconnectGetsNoResponse(t *testing.T) {
 func TestFR8IndependentTimers(t *testing.T) {
 	health := NewHealth()
 	pl := NewPipeline(context.Background(), 400*time.Millisecond, health,
-		notReadyProber(t, health), wakeStub(t), NewLogger(io.Discard))
+		notReadyProber(t, health), wakeStub(t), testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
 
 	p1, c1 := newPipePending(t)
 	p1.Arrival = time.Now().Add(-350 * time.Millisecond) // ~50ms left
@@ -216,25 +209,31 @@ func TestFR8IndependentTimers(t *testing.T) {
 }
 
 // TestFR8HealthyBeforeBoundForwards covers the "does not become healthy within
-// the bound" condition: a target that turns healthy before the bound releases
-// the request with no 504. The forwarder writes the response in T7.
+// the bound" condition: a target that turns healthy before the bound forwards
+// the request rather than answering with a 504.
 func TestFR8HealthyBeforeBoundForwards(t *testing.T) {
+	const resp = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+	addr := rawTarget(t, func(c net.Conn) {
+		readRequest(c, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+		io.WriteString(c, resp)
+	})
+
 	health := NewHealth()
 	prober := stubProber(health, 5*time.Millisecond, func(context.Context) bool { return true })
 	t.Cleanup(prober.Close)
 	pl := NewPipeline(context.Background(), 2*time.Second, health,
-		prober, wakeStub(t), NewLogger(io.Discard))
+		prober, wakeStub(t), testForwarder(t, "http://"+addr), NewLogger(io.Discard))
 
 	p, client := newPipePending(t)
 	h := startHandle(pl, p, client)
 	elapsed := h.wait(t)
-	resp := h.response(t, p)
+	got := string(h.response(t, p))
 
 	if elapsed >= time.Second {
 		t.Fatalf("waited %v despite becoming healthy", elapsed)
 	}
-	if len(resp) != 0 {
-		t.Fatalf("wrote %d bytes instead of forwarding later:\n%s", len(resp), resp)
+	if got != resp {
+		t.Fatalf("client received %q, want the target's %q", got, resp)
 	}
 }
 
@@ -245,7 +244,7 @@ func TestFR8WakeFailureDoesNotWait(t *testing.T) {
 	cfg := testConfig()
 	cfg.WakeCommand = failingCommand(t, 3)
 	pl := NewPipeline(context.Background(), 10*time.Second, health,
-		notReadyProber(t, health), NewWakeTrigger(cfg), NewLogger(io.Discard))
+		notReadyProber(t, health), NewWakeTrigger(cfg), testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
 
 	p, client := newPipePending(t)
 	h := startHandle(pl, p, client)
