@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -134,4 +135,24 @@ func (b *blockOnDiscard) first() *Pending {
 		return nil
 	}
 	return b.got[0]
+}
+
+// syncBuffer is a bytes.Buffer safe for the goroutine that logs and the test
+// goroutine that reads it, so a -race run is not tripped by the test's own
+// observation of a concurrently written log.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

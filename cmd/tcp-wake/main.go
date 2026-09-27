@@ -23,23 +23,21 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// The health belief and the probe that is its only writer (T4). The probe
-	// runs while a request is pending and the request path releases on the
-	// first ready observation.
+	// The health belief, the probe that writes it (T4), the wake trigger, and
+	// the one-line log (T5). The pipeline wakes a not-healthy target once per
+	// request and holds the request until the probe reports it healthy.
 	health := proxy.NewHealth()
 	prober := proxy.NewProber(cfg, health)
 	defer prober.Close()
+	logger := proxy.NewLogger(os.Stdout)
+	wake := proxy.NewWakeTrigger(cfg)
 
-	// TODO(T5, T6, T7): replace this hold-only handler with the wake trigger,
-	// wait-bound timer, and forwarder. Until then an accepted request is held
-	// open until its client disconnects or the target becomes healthy, and no
-	// response bytes are written (FR-2, FR-6).
-	listener := proxy.New(cfg, func(p *proxy.Pending) error {
-		prober.RequestStarted()
-		defer prober.RequestDone()
-		health.WaitHealthyOr(ctx, p.Discarded())
-		return nil
-	})
+	// TODO(T6, T7): extend Pipeline.Handle with the wait-bound timer and the
+	// forwarder. Until then a held request is released when the target becomes
+	// healthy or its client disconnects, and no response bytes are written
+	// (FR-2, FR-6).
+	pl := proxy.NewPipeline(ctx, cfg, health, prober, wake, logger)
+	listener := proxy.New(cfg, pl.Handle)
 
 	if err := listener.Serve(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
