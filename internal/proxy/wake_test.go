@@ -206,9 +206,11 @@ func TestFR3FiveRequestsProduceFiveExecutions(t *testing.T) {
 		go pl.Handle(p)
 	}
 
-	waitFor(t, "five wake executions", func() bool { return countLines(record) == n })
-	if got := strings.Count(logBuf.String(), "\n"); got != n {
-		t.Fatalf("wrote %d wake log lines, want %d", got, n)
+	// Wait on the log line, not the record: the record is written inside the
+	// child before Run returns, so the line can lag the record by a moment.
+	waitFor(t, "five wake log lines", func() bool { return strings.Count(logBuf.String(), "\n") == n })
+	if got := countLines(record); got != n {
+		t.Fatalf("wake command ran %d time(s), want %d", got, n)
 	}
 
 	for _, p := range pendings {
