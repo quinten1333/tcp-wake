@@ -176,6 +176,25 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   also drain the terminating `0` chunk **and** the trailer blank line, or the
   relay blocks writing the trailer and the test hangs. net.Pipe is synchronous,
   so the reader runs in a goroutine.
+- **T8 / error responses and the NFR-6 invariant.** `errors.go` is the single
+  seam: `writeError` is the only place the system writes a response of its own,
+  and the four ADR-0014 component tokens (`wait_bound`, `wake_command`,
+  `target`, `held_body_cap`) are constants so code and tests cannot drift. A
+  source-scan test (`TestNFR6OnlyErrorsDotGoWritesAResponse`) keeps a future
+  second write site from bypassing the "exactly one response" property. The 504
+  `limit` is the Go canonical duration (`2m0s` for a 120s config), not the TOML
+  spelling, because the parsed config does not retain the original text; the
+  test asserts `time.ParseDuration(limit) == configured` rather than a literal.
+  `TestADR0014ErrorBodySchema` triggers each of the four real paths over a
+  `responseCounter` (a `net.Conn` that records every byte the proxy writes) and
+  `parseErrorResponse` asserts the shared framing; `TestNFR6...` counts one
+  response per connected request and zero for an abandoned one.
+- **T8 / counting responses.** Do not count responses by substring — a relayed
+  body can contain `HTTP/1.1`. Replay the recorded bytes through
+  `http.ReadResponse`; note that a second `ReadResponse` at EOF returns
+  `io.ErrUnexpectedEOF`, so guard with `r.Peek(1) == io.EOF` before each read.
+  net.Pipe is synchronous, so the client end must be drained in a goroutine or
+  every proxy write blocks.
 - **Naming and exposure (post-T5 review).** The Listener constructor is
   `NewListener`, not `New`, because the package has several constructors and
   `New` was ambiguous. The held set is unexported (`heldSet`/`newHeldSet`,

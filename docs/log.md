@@ -570,3 +570,32 @@ Next steps:
 - T8 — Error responses: the four JSON bodies and the one-response-per-request invariant
 - T9 — Logger: the error line and the no-content inspection
 
+
+## [8] Error responses — the four bodies and the one-response invariant
+
+Implemented T8: the acceptance evidence for the four ADR-0009 error paths and NFR-6. All four bodies already flowed through the single `writeError` seam and each had a scattered substring check, so this iteration consolidated them onto a strict shared parser, added the exact ADR-0014 shape assertions in one place, and added the countable form of NFR-6 (exactly one response per accepted, still-connected request; zero for an abandoned one). I also made the `component` tokens constants so the code and its tests cannot drift, and documented on `writeError` that it is the only place the system writes a response of its own.
+
+Steps taken:
+- Extracted the four ADR-0014 component tokens as constants and rewired `intake.go`/`pipeline.go` onto them.
+- Documented the `limit` format on `writeError`: the Go canonical duration (`2m0s` for a 120s config) and `ByteSize`'s IEC form (`64MiB`); architecture §5.1's `"120s"` is illustrative, and the 504 test asserts `time.ParseDuration(limit) == configured` rather than a spelling.
+- Added `errors_test.go`: `TestWriteErrorIsSingleWellFormedResponse`, the table-driven `TestADR0014ErrorBodySchema` (four real triggers: 504/500/502/413), `TestNFR6ExactlyOneResponsePerAcceptedRequest`, and `TestNFR6OnlyErrorsDotGoWritesAResponse`.
+- Strengthened `parseErrorResponse` to assert the shared framing (one status line, JSON type, matching `Content-Length`, `Connection: close`) and folded the FR-8/FR-17/FR-18 tests onto it.
+
+Decisions:
+- [Kept the 504 `limit` as the canonical Go duration string rather than the TOML spelling, because the parsed config does not retain the original text and `limit` names the configured bound, which is what ADR-0014 requires.
+- [Counted responses by replaying the recorded write bytes through `http.ReadResponse`, not by substring, so a relayed body containing `HTTP/1.1` is not miscounted.
+- [Made NFR-6 countable with a dedicated end-to-end scenario test rather than instrumenting the whole test binary; the suite-wide accounting is T12's job.
+- [Guarded the single-seam property structurally: a source scan asserts no non-test file outside `errors.go` writes an `"HTTP/1.1 ` literal.
+
+Changes:
+- internal/proxy/errors.go: component constants; `writeError` doc comment and limit-format note
+- internal/proxy/intake.go, internal/proxy/pipeline.go: use the constants
+- internal/proxy/errors_test.go: new exact-shape, well-formedness, NFR-6 counting, and source-scan tests
+- internal/proxy/intake_test.go: strict `parseErrorResponse`
+- internal/proxy/waitbound_test.go, internal/proxy/wake_test.go, internal/proxy/forward_test.go: FR-8/17/18 assertions folded onto the shared parser
+- docs/implementation-plan.md: ticked T8
+- docs/log.md: appended this entry
+
+Next steps:
+- T9 — Logger: the error line and the no-content inspection
+- T10 — Restart semantics

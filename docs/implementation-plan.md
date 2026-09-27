@@ -43,7 +43,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   Forward a held request to `target_address` over HTTP and relay the response (IF-2); write held bytes verbatim; relay the response verbatim, streaming each chunk as it arrives; on the state becoming healthy, unblock every held request so each opens its own upstream connection without waiting for the others; a transport-level failure gives that client a 502 and triggers a probe; hold at least 8 concurrent requests without discarding any (NFR-5).
   Verify: `go test ./...` — byte-exact forward and response; 3 held requests open 3 upstream connections within 100 ms of each other; a 100-chunk stream arrives unbuffered; a dropped target gives one 502 and then a probe; 8 concurrent requests during one boot window all receive a response.
 
-- [ ] **T8 — Error responses (NFR-6, ADR-0009).**
+- [x] **T8 — Error responses (NFR-6, ADR-0009).**
   The four JSON bodies, each naming the component or limit: 504 the wait bound, 500 the wake command, 502 the unreachable target, 413 the body cap. These four are the only responses the system itself produces, so together with T7's relay they must yield exactly one response per accepted request whose client stays connected (NFR-6).
   Verify: `go test ./...` — each of the four is triggered and its body asserted; the response count across the suite equals the accepted count minus client-abandoned requests.
 
