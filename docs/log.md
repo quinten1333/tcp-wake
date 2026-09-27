@@ -599,3 +599,40 @@ Changes:
 Next steps:
 - T9 — Logger: the error line and the no-content inspection
 - T10 — Restart semantics
+
+
+## [8] Error responses — the four ADR-0014 bodies and the NFR-6 one-response invariant
+
+Implemented T8 by turning the four ADR-0009 error paths from scattered substring checks into one exact-schema assertion, a countable NFR-6 test, and a structural guard that `writeError` is the only response write site. The four bodies already flowed through the single seam, so the work was consolidation and evidence rather than new behaviour; I also made the component tokens constants so code and tests cannot drift, and settled the 504 limit format that T6 left open. A responseCounter records every byte the proxy writes and replays it through `http.ReadResponse`, which is how NFR-6 is now measured instead of assumed. All checks pass and T8 is ticked.
+
+Steps taken:
+- Extracted the four ADR-0014 component tokens as constants and rewired `intake.go` and `pipeline.go` onto them.
+- Documented on `writeError` that it is the only place the system writes a response of its own.
+- Added `errors_test.go` with the well-formedness test, the table-driven `TestADR0014ErrorBodySchema` (real 504/500/502/413 triggers), `TestNFR6ExactlyOneResponsePerAcceptedRequest`, and the `errors.go`-only source scan.
+- Strengthened `parseErrorResponse` to assert the shared framing and folded the FR-8/17/18 tests onto it.
+- Ran gofmt, go build, go vet, go test, go test -race, and the traceability check; all clean.
+- Committed and pushed in four self-contained commits and updated the plan, log, and AGENTS.md.
+
+Decisions:
+- [Kept the 504 `limit` as the Go canonical duration (2m0s for a 120s config) rather than the TOML spelling, because the parsed config does not retain the original text; the test asserts `time.ParseDuration(limit) == configured` rather than a literal.
+- [Counted responses by replaying recorded bytes through `http.ReadResponse`, not by substring, so a relayed body containing HTTP/1.1 is not miscounted.
+- [Made NFR-6 accountable with a dedicated end-to-end scenario test rather than instrumenting the whole test binary; the suite-wide count is T12 work.
+- [Guarded the single-seam property structurally with a source scan, so a future second write site cannot silently break NFR-6.
+- [Kept existing per-requirement tests named for their IDs but moved their parsing onto the shared helper.
+
+Changes:
+- internal/proxy/errors.go: component constants; `writeError` doc comment and limit-format note
+- internal/proxy/intake.go: use componentHeldBodyCap
+- internal/proxy/pipeline.go: use componentWakeCommand, componentTarget, componentWaitBound
+- internal/proxy/errors_test.go: new exact-shape, well-formedness, NFR-6 counting, and source-scan tests
+- internal/proxy/intake_test.go: strict `parseErrorResponse`
+- internal/proxy/waitbound_test.go, internal/proxy/wake_test.go, internal/proxy/forward_test.go: FR-8/17/18 assertions folded onto the shared parser
+- docs/implementation-plan.md: ticked T8
+- AGENTS.md: T8 error-response, response-counting, and shared-helper learnings
+- docs/log.md: appended the iteration entries
+
+Next steps:
+- T9 — Logger: the error line and the no-content inspection
+- T10 — Restart semantics
+- T11–T13 — acceptance suite and RTM
+- T14–T16 — deployment, deployment check, and README
