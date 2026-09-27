@@ -23,3 +23,24 @@ Next steps:
 - T2 — Go module, config loader (module tcp-wake, TOML config, env overrides)
 - T3 — Listener and Intake (accept connections, retain raw request bytes)
 - T4 — Health state and Probe (poll /health endpoint, manage healthy/not healthy state)
+
+## T1 Re-verification — setuid bit is effective, not just displayed
+
+Re-ran T1 cleanly and strengthened the check. The prior run compared `stat` output
+and the host mount options; it did not prove the bit was *effective*, and it built
+the stub under `/tmp`, which is mounted `nosuid` on this host.
+
+Findings:
+- With the stub under `/tmp`, executing it as uid 1000 yields `effective_uid=1000`
+  — the setuid bit is inert because the bind mount inherits `/tmp`'s `nosuid`.
+- Rebuilding the stub in the repository directory (btrfs root subvolume, no
+  `nosuid`) makes execution yield `effective_uid=0` both on the host and inside a
+  `debian:stable-slim` container running as uid 1000.
+- The container bind mount line for the repo stub is
+  `/dev/vda3 /mnt/stub btrfs ro,relatime,...` with no `nosuid`.
+
+Decision: the definitive T1 test is *execution* of the setuid binary and reading
+its effective uid, not `stat`. README.md now documents this and warns to build the
+stub outside `/tmp`.
+
+Result: PASS. ADR-0003 and ADR-0005 confirmed. T1 checkbox ticked; T2 is unblocked.

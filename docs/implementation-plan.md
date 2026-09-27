@@ -11,7 +11,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
 
 ## Phase 0 — Blocking prerequisite
 
-- [ ] **T1 — Verify the setuid bit survives the container (R-1, ADR-0003, ADR-0005, NFR-7).**
+- [x] **T1 — Verify the setuid bit survives the container (R-1, ADR-0003, ADR-0005, NFR-7).**
   Build a minimal container that bind-mounts a setuid-root stub, start it, and check the bit from *inside*:
   `ls -l` shows `4755 root root` and `id` shows a non-root uid. Also confirm the mount is not `nosuid`.
   **If this fails, stop and reopen ADR-0003 and ADR-0005** — do not proceed to T2 with a plan that cannot work.

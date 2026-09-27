@@ -1,2 +1,6 @@
 # Stroma run artifacts
 .stroma/
+
+# T1 setuid stub build artifacts
+/stub
+/stub.c
