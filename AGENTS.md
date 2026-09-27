@@ -163,9 +163,13 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   `DialTimeout`/`Set*Deadline`. Accepted limitation: a `HEAD` response's
   `Content-Length` with no body would make the relay wait, because the method is
   never parsed — HEAD is outside the client profile.
-- **T7 / shared chunk walker.** `walkChunks(r, onSize, emit)` in `intake.go` is
-  shared by Intake (cap-enforcing, buffering) and the response relay
-  (uncapped, streaming). If you change chunk framing, both paths change.
+- **T7 / shared chunk walker and head framing.** `walkChunks(r, onSize, emit)` in
+  `intake.go` is shared by Intake (cap-enforcing, buffering) and the response
+  relay (uncapped, streaming), and the relay reuses `readHead` and `framing` for
+  the response head — `framing` already skips line 0, so it reads a request or a
+  response head identically. Both `ErrFraming`'s text and `readHead`'s messages
+  are request-worded but reused for responses; if you change chunk or head
+  framing, both paths change.
 - **T7 / streaming test gotchas.** `TestFR15StreamsChunksUnbuffered` uses a
   per-chunk handshake: the target writes a chunk, waits for the client's ack,
   then writes the next, so a buffering regression deadlocks. The client must
@@ -179,9 +183,9 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   it through `Listener.heldCount()`. `Handler` returns nothing — the pipeline
   writes its own responses and logs its own errors, so a returned error was dead
   surface. `WakeResult` no longer carries the command (the trigger and logger
-  hold it) and `Pipeline` stores only the `waitBound` value rather than the whole
-  `*config.Config` (T6 added exactly that one dependency; T7 should follow the
-  same rule and inject the forwarder, not the config).
+  hold it). `Pipeline` stores only the `waitBound` value plus a `*Forwarder`, not
+  the whole `*config.Config`; keep injecting the specific dependency a new block
+  needs (T6 added `waitBound`, T7 the forwarder) rather than the config.
 - **Linting.** There is no `golangci-lint`/config; `gofmt -l .` and `go vet ./...`
   are the linters. Run `go test -count=1 ./...` (and optionally `-race`) when a
   cached PASS could mask a change.
