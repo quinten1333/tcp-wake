@@ -55,9 +55,17 @@ func (l *Listener) Serve(ctx context.Context) error {
 	}
 	defer ln.Close()
 
+	// Close the listener when the context is cancelled, and stop this watcher
+	// when Serve returns for any other reason so the goroutine cannot outlive
+	// the call.
+	stopWatching := make(chan struct{})
+	defer close(stopWatching)
 	go func() {
-		<-ctx.Done()
-		ln.Close()
+		select {
+		case <-ctx.Done():
+			ln.Close()
+		case <-stopWatching:
+		}
 	}()
 
 	var wg sync.WaitGroup
