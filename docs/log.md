@@ -389,3 +389,39 @@ Changes:
 Next steps:
 - T6 — Wait-bound timer measured from arrival and never restarted
 - T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
+
+## [5] SOLID review — remove dead surface and clarify the proxy package
+
+Reviewed the whole package against SOLID and executed the safe cleanups, all behaviour-preserving. The review found dead surface (an unread `WakeResult.Command`, an unused `Pipeline.cfg`, an uncalled `HeldSet.All`, and a `Handler` error that `serveConn` discarded), an over-exported held set, an ambiguous `New` constructor, a stale package doc, and a test config that could panic the prober on a zero ticker. I removed the dead state, unexported the held set behind `heldCount()`, renamed the constructor to `NewListener`, updated the package documentation, and gave the test config valid cadences. Error-response consolidation and the wait-bound/forwarder additions were deliberately left to T8, T6, and T7 to avoid rework. `gofmt`, `go build`, `go vet`, `go test -race`, and the traceability check all pass.
+
+Steps taken:
+- Removed `WakeResult.Command`, `Pipeline.cfg` and its `NewPipeline` parameter, `HeldSet.All`, and the `Handler`/`Handle` error return.
+- Unexported the held set to `heldSet` (`newHeldSet`, `add`, `remove`, `count`, `closeAll`) and exposed `Listener.heldCount()` for tests.
+- Renamed `proxy.New` to `proxy.NewListener` across `main` and tests.
+- Updated the `package proxy` doc comment to name every block.
+- Gave `testConfig()` positive `ProbeInterval`/`ProbeTimeout`.
+- Recorded the naming and exposure rules in AGENTS.md and appended a review entry to docs/log.md.
+
+Decisions:
+- [Removed the unused `Handler` error instead of inventing a consumer; the pipeline writes responses and logs inside `Handle` (ISP).
+- [Unexported the held set because nothing outside the package observes it (encapsulation).
+- [Renamed `New` to `NewListener` now that the package has several types.
+- [Left error-response consolidation to T8 and the wait-bound/forwarder additions to T6/T7 to avoid rework.
+
+Changes:
+- internal/proxy/heldset.go: unexported `heldSet`, dropped `All`
+- internal/proxy/listener.go: `NewListener`, `heldSet`, `heldCount`, `Handler` without error
+- internal/proxy/pipeline.go: dropped `cfg`, `Handle` returns nothing
+- internal/proxy/wake.go: dropped `WakeResult.Command`
+- internal/proxy/request.go: updated package doc
+- internal/proxy/helpers_test.go: valid test cadences and handler signature
+- internal/proxy/{listener,deadline,wake}_test.go: updated call sites
+- cmd/tcp-wake/main.go: `proxy.NewListener`, `NewPipeline` without cfg
+- AGENTS.md: naming/exposure rules
+- docs/log.md: appended this entry
+
+Next steps:
+- T6 — Wait-bound timer measured from arrival and never restarted
+- T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
+- T8 — Error responses: the four JSON bodies and the one-response-per-request invariant
+
