@@ -532,3 +532,41 @@ Changes:
 Next steps:
 - T8 — Error responses: the four JSON bodies and the one-response-per-request invariant
 - T9 — Logger: the error line and the no-content inspection
+
+## [7] Forwarder — relay held requests to the target over a transparent connection
+
+Implemented T7: the forward path that sends a held request's exact bytes to `target_address` and relays the response back. `Forwarder` dials with a bare `net.Dial` (no timeout, per §8.5/§2 non-goal 7), writes the retained bytes verbatim, and relays the response with its framing tracked only to know where it ends — chunked segments as they arrive (FR-15), `Content-Length` via `io.CopyN`, otherwise until close. Nothing is re-serialised, so FR-13/FR-14 byte-exactness is a property of the copy (ADR-0004). `Forward` errors only before the first client byte, so a mid-body upstream failure is still exactly one response (NFR-6), and a returned error makes the pipeline write the 502 naming `target` and call `ProbeNow` (FR-18/FR-19). I also extracted the shared `walkChunks` chunk state machine so Intake and the relay framed chunks one way.
+
+Steps taken:
+- Extracted `walkChunks`/`walkTrailers` and rewired Intake's `readChunkedBody` onto it (separate commit).
+- Added `internal/proxy/forward.go` with `Forwarder`, `NewForwarder` (URL validated at start), `Forward`, and `relayResponse`.
+- Added the forwarder to `Pipeline`/`NewPipeline` and the forward/502/probe branch in `Handle`.
+- Wired `NewForwarder(cfg.TargetAddress)` into `cmd/tcp-wake`.
+- Added 11 tests in `forward_test.go` plus `newPipePendingBytes`, and updated the `NewPipeline` call sites.
+- Ran four mutations (buffer the chunked response; error after the head; skip the probe; drop the verbatim write); each turned the expected test red.
+- Smoke-tested a healthy target (body came back) and a stopped target (502 naming `target`).
+
+Decisions:
+- [Used a transparent TCP relay rather than `http.Client`: re-serialising would change header order, casing, and framing and fail FR-13 by construction.
+- [Tracked response framing (chunked / Content-Length / until-close) instead of copying to EOF, because the target may keep the connection alive.
+- [Returned an error only before the first client write, preserving NFR-6's one-response guarantee.
+- [Ran a probe after a transport failure rather than inferring the belief from the failure (FR-19, ADR-0008).
+- [Set no deadline and used no `DialTimeout` on the forward path, enforced by a source-scan test.
+- [Validated `target_address` at start via `NewForwarder`; recorded the HEAD response as an accepted limitation, since the method is never parsed.
+
+Changes:
+- internal/proxy/forward.go: new `Forwarder` and `relayResponse`
+- internal/proxy/forward_test.go: 11 tests for FR-1/4/5/13/14/15/18/19, IF-2, NFR-5, NFR-6, and the no-timeout rule
+- internal/proxy/intake.go: shared `walkChunks`/`walkTrailers`
+- internal/proxy/pipeline.go: forward, 502, and probe branch
+- internal/proxy/helpers_test.go: `newPipePendingBytes`
+- internal/proxy/{wake,waitbound}_test.go: `NewPipeline` call sites
+- cmd/tcp-wake/main.go: build and pass the forwarder
+- docs/implementation-plan.md: ticked T7
+- AGENTS.md: relay design, no-timeout rule, shared framing, streaming-test gotchas
+- docs/log.md: appended this entry
+
+Next steps:
+- T8 — Error responses: the four JSON bodies and the one-response-per-request invariant
+- T9 — Logger: the error line and the no-content inspection
+
