@@ -122,3 +122,37 @@ Verification:
 Next steps:
 - T3 — Listener and Intake (accept, retain raw bytes, framing, cap, no deadlines)
 - T4 — Health state and Probe; T5 — Wake trigger
+## [1] Landed the tcp-wake Go module and a validated, env-overridable TOML config loader.
+Created the `tcp-wake` module (Go 1.27.1) and the config loader the whole service will read its key set from, satisfying IF-5 and ADR-0011/0013/0015, because every later building block depends on that key set being resolved and validated before anything starts. The loader resolves the file by `--config` -> `$TCPWAKE_CONFIG` -> the fixed `/etc/tcp-wake/config.toml` with no working-directory fallback, overlays `TCPWAKE_<KEY>` environment variables so the environment wins over the file, and validates every duration and size at start. Precedence is a merge over raw strings (defaults -> file -> env -> parse) rather than a presence bitmask, which keeps the three sources and the parse step separate and testable. A missing, unreadable, unknown-key, or malformed file prevents start with a message naming the key, and an env override set to empty is an error rather than a silent fallback. Fifteen unit tests plus mutation checks cover per-key file changes, discovery precedence, env-wins, malformed values from both sources, and that the code defaults and TOML tags match `docs/config.example.toml`.
+
+Steps taken:
+- Ran `go mod init tcp-wake` (go 1.27.1) and added the one permitted dependency, `github.com/BurntSushi/toml v1.6.0`
+- Implemented `internal/config` with a typed `Config`, a `ByteSize` IEC parser, a prefilled `rawConfig`, a shared `keyField` binding table, `ResolvePath`, and `Load(args, lookupEnv)`
+- Added `cmd/tcp-wake/main.go` to load config and exit non-zero on failure
+- Wrote 15 tests including discovery order, env-wins, empty-override rejection, malformed durations/sizes, unknown key, syntax error, and a reflection guard pinning defaults/tags to the example file
+- Mutation-tested the suite: disabling env overrides and swallowing malformed durations each turned the expected tests red, then restored
+- Ran `gofmt -l .`, `go build ./...`, `go vet ./...`, `go test -count=1 ./...` and the traceability checker, all clean; ticked T2, updated logs/AGENTS.md, committed and pushed
+
+Decisions:
+- [Use `BurntSushi/toml`, the single small third-party dependency ADR-0013 permits
+- [Keep the code defaults pinned to `docs/config.example.toml` by a test so the file and code cannot drift
+- [Implement precedence over raw strings: defaults -> file -> env -> parse, so "environment wins" is a property of the merge
+- [Inject `lookupEnv` into `Load`/`ResolvePath` so tests never read the real environment or `/etc`
+- [Treat a set-but-empty environment override as an error, never a silent fallback
+- [Decode into a pre-filled struct (BurntSushi only overwrites present keys) and reject unknown keys via `MetaData.Undecoded()`
+
+Changes:
+- go.mod: new module `tcp-wake` on Go 1.27.1 with the toml requirement
+- go.sum: checksums for `github.com/BurntSushi/toml v1.6.0`
+- internal/config/config.go: config types, IEC `ByteSize` parser, path resolution, env overlay, and start-time validation
+- internal/config/config_test.go: 15 tests covering keys, precedence, discovery, malformed input, and example-file parity
+- cmd/tcp-wake/main.go: entry point that loads config and exits non-zero on error
+- docs/implementation-plan.md: ticked T2
+- docs/log.md: appended T2 entries
+- AGENTS.md: recorded the loader contract, TOML merge mechanics, lint/test commands, and fixed the stale specs path
+
+Next steps:
+- T3 — Listener and Intake: accept, retain raw request bytes, framing, `held_body_cap` 413, and no read/write deadlines
+- T4 — Health state and Probe against `health_path` at `probe_interval`/`probe_timeout`
+- T5 — Wake trigger: exec `wake_command` once per held request and report its exit status
+- T6 — Wait-bound timer measured from arrival and never restarted
