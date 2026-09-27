@@ -55,7 +55,7 @@ func newPipePendingBytes(t *testing.T, raw string) (*Pending, net.Conn) {
 // it and the address a client can dial. The listener is cancelled on cleanup.
 func startListener(t *testing.T, cfg *config.Config, h Handler) (*Listener, string) {
 	t.Helper()
-	l := NewListener(cfg, h)
+	l := NewListener(cfg, h, NewLogger(io.Discard))
 	addrCh := make(chan string, 1)
 	l.listen = func(network, address string) (net.Listener, error) {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")

@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -73,7 +74,7 @@ func (s *spyListener) calls() int {
 func TestNFR4ListenerSetsNoDeadline(t *testing.T) {
 	l := NewListener(testConfig(), func(p *Pending) {
 		<-p.Discarded()
-	})
+	}, NewLogger(io.Discard))
 
 	addrCh := make(chan string, 1)
 	var sl *spyListener

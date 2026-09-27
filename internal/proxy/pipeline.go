@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 )
@@ -50,8 +51,10 @@ func (pl *Pipeline) Handle(p *Pending) {
 		res := pl.wake.Run(pl.ctx)
 		pl.logger.Wake(pl.wake.Command(), res)
 		if res.Err != nil {
-			writeError(p.Conn, http.StatusInternalServerError, componentWakeCommand,
-				fmt.Sprintf("wake command %q failed: %v", pl.wake.Command(), res.Err), "")
+			pl.writeAndLog(p.Conn, http.StatusInternalServerError, errorDetail{
+				Message:   fmt.Sprintf("wake command %q failed: %v", pl.wake.Command(), res.Err),
+				Component: componentWakeCommand,
+			})
 			return
 		}
 	}
@@ -73,8 +76,10 @@ func (pl *Pipeline) Handle(p *Pending) {
 		// the only case a forward can answer, and it also repairs the belief by
 		// a probe rather than by inference (FR-18, FR-19, ADR-0008).
 		if err := pl.forward.Forward(p); err != nil {
-			writeError(p.Conn, http.StatusBadGateway, componentTarget,
-				fmt.Sprintf("target %s is unreachable: %v", pl.forward.Address(), err), "")
+			pl.writeAndLog(p.Conn, http.StatusBadGateway, errorDetail{
+				Message:   fmt.Sprintf("target %s is unreachable: %v", pl.forward.Address(), err),
+				Component: componentTarget,
+			})
 			pl.prober.ProbeNow(pl.ctx)
 		}
 		return
@@ -87,10 +92,21 @@ func (pl *Pipeline) Handle(p *Pending) {
 		return
 	}
 	if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-		writeError(p.Conn, http.StatusGatewayTimeout, componentWaitBound,
-			fmt.Sprintf("target did not become healthy within the wait bound of %s", pl.waitBound),
-			pl.waitBound.String())
+		pl.writeAndLog(p.Conn, http.StatusGatewayTimeout, errorDetail{
+			Message:   fmt.Sprintf("target did not become healthy within the wait bound of %s", pl.waitBound),
+			Component: componentWaitBound,
+			Limit:     pl.waitBound.String(),
+		})
 	}
+}
+
+// writeAndLog writes one error response and logs the same detail, so the body
+// the client receives and the line the log records cannot diverge (ADR-0009,
+// ADR-0010). It logs even when the write fails, because the condition occurred
+// whether or not the client was still there to hear it.
+func (pl *Pipeline) writeAndLog(conn net.Conn, status int, detail errorDetail) {
+	writeError(conn, status, detail)
+	pl.logger.Error(status, detail)
 }
 
 // isClosed reports whether ch has been closed, without blocking.

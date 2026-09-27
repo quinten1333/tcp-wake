@@ -30,6 +30,12 @@ func main() {
 	prober := proxy.NewProber(cfg, health)
 	defer prober.Close()
 	logger := proxy.NewLogger(os.Stdout)
+	// The log is the counting artefact for FR-3, FR-9, and FR-12, so an
+	// unwritable log is a start-time failure (SRS §5.6).
+	if err := logger.Ready(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	wake := proxy.NewWakeTrigger(cfg)
 	forward, err := proxy.NewForwarder(cfg.TargetAddress)
 	if err != nil {
@@ -38,7 +44,7 @@ func main() {
 	}
 
 	pl := proxy.NewPipeline(ctx, cfg.WaitBound, health, prober, wake, forward, logger)
-	listener := proxy.NewListener(cfg, pl.Handle)
+	listener := proxy.NewListener(cfg, pl.Handle, logger)
 
 	if err := listener.Serve(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)

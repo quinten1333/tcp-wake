@@ -251,7 +251,10 @@ func TestFR17ClientGets500NamingWakeCommand(t *testing.T) {
 		t.Fatalf("500 body does not name the wake command: %+v", detail)
 	}
 
-	if got := strings.Count(logBuf.String(), "\n"); got != 1 {
+	if got := strings.Count(logBuf.String(), "wake command="); got != 1 {
 		t.Fatalf("wrote %d wake log lines, want 1 (FR-17 verify):\n%s", got, logBuf.String())
+	}
+	if got := strings.Count(logBuf.String(), "error status=500"); got != 1 {
+		t.Fatalf("wrote %d error log lines, want 1 (ADR-0010):\n%s", got, logBuf.String())
 	}
 }

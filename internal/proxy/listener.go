@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"sync"
 
 	"tcp-wake/internal/config"
@@ -26,6 +27,7 @@ type Listener struct {
 	cfg    *config.Config
 	held   *heldSet
 	handle Handler
+	logger *Logger
 
 	// listen is net.Listen in production and is injectable so tests can bind
 	// a loopback port and learn its address.
@@ -33,12 +35,14 @@ type Listener struct {
 }
 
 // NewListener builds a Listener for cfg. handle is invoked for every request
-// that Intake retains.
-func NewListener(cfg *config.Config, handle Handler) *Listener {
+// that Intake retains. logger records a body-cap rejection, the one error
+// produced here rather than in the pipeline.
+func NewListener(cfg *config.Config, handle Handler, logger *Logger) *Listener {
 	return &Listener{
 		cfg:    cfg,
 		held:   newHeldSet(),
 		handle: handle,
+		logger: logger,
 		listen: net.Listen,
 	}
 }
@@ -102,6 +106,12 @@ func (l *Listener) serveConn(conn net.Conn) {
 	r := bufio.NewReader(conn)
 	p, err := Intake(conn, r, l.cfg.HeldBodyCap)
 	if err != nil {
+		// The 413 is the only error produced outside the pipeline; Intake has
+		// already written it, so log the same detail (ADR-0010). A framing
+		// error produces no response and is deliberately not logged.
+		if errors.Is(err, ErrBodyTooLarge) {
+			l.logger.Error(http.StatusRequestEntityTooLarge, heldBodyCapDetail(l.cfg.HeldBodyCap))
+		}
 		conn.Close()
 		return
 	}

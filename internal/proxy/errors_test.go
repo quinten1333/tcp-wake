@@ -136,7 +136,7 @@ func TestWriteErrorIsSingleWellFormedResponse(t *testing.T) {
 	defer client.Close()
 
 	go func() {
-		writeError(server, http.StatusBadGateway, componentTarget, "target down", "")
+		writeError(server, http.StatusBadGateway, errorDetail{Message: "target down", Component: componentTarget})
 		server.Close()
 	}()
 

@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+
+	"tcp-wake/internal/config"
 )
 
 // The four component tokens of the ADR-0014 error schema. They are an
@@ -32,6 +34,18 @@ type errorDetail struct {
 	Limit     string `json:"limit,omitempty"`
 }
 
+// heldBodyCapDetail builds the 413 detail once, so the response the client
+// receives and the line the logger writes cannot drift. The Listener reuses it
+// to log a body-cap rejection, since that error is produced by Intake rather
+// than by the pipeline.
+func heldBodyCapDetail(limit config.ByteSize) errorDetail {
+	return errorDetail{
+		Message:   fmt.Sprintf("request body exceeds the held body cap of %s", limit),
+		Component: componentHeldBodyCap,
+		Limit:     limit.String(),
+	}
+}
+
 // writeError writes one complete HTTP response to conn and leaves the
 // connection open for the caller to close.
 //
@@ -42,17 +56,16 @@ type errorDetail struct {
 // paths are the wait bound (504), the wake command (500), a transport-level
 // forward failure (502), and the held body cap (413).
 //
-// limit carries the bounded condition's value as a string: for the wait bound
-// it is the Go canonical duration form ("2m0s" for a 120s configuration) and
-// for the body cap it is ByteSize's IEC form ("64MiB"). Architecture §5.1
+// The caller passes the detail once and may also hand the same value to
+// Logger.Error, so the log records exactly what the client was told.
+//
+// detail.Limit carries the bounded condition's value as a string: for the wait
+// bound it is the Go canonical duration form ("2m0s" for a 120s configuration)
+// and for the body cap it is ByteSize's IEC form ("64MiB"). Architecture §5.1
 // illustrates the former as "120s"; the value names the configured bound, which
 // is what ADR-0014 requires, and the original TOML spelling is not retained.
-func writeError(conn net.Conn, status int, component, message, limit string) error {
-	body, err := json.Marshal(errorEnvelope{Error: errorDetail{
-		Message:   message,
-		Component: component,
-		Limit:     limit,
-	}})
+func writeError(conn net.Conn, status int, detail errorDetail) error {
+	body, err := json.Marshal(errorEnvelope{Error: detail})
 	if err != nil {
 		return err
 	}

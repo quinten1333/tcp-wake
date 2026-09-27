@@ -255,12 +255,6 @@ func walkTrailers(r *bufio.Reader, emit func([]byte) error) error {
 // connection. A rejection happens before the request is held, so closing is
 // safe and the client is not left waiting.
 func rejectTooLarge(conn net.Conn, limit config.ByteSize) {
-	writeError(
-		conn,
-		http.StatusRequestEntityTooLarge,
-		componentHeldBodyCap,
-		fmt.Sprintf("request body exceeds the held body cap of %s", limit),
-		limit.String(),
-	)
+	writeError(conn, http.StatusRequestEntityTooLarge, heldBodyCapDetail(limit))
 	conn.Close()
 }
