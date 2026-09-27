@@ -459,3 +459,38 @@ Changes:
 Next steps:
 - T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
 - T8 — Error responses: the four JSON bodies and the one-response-per-request invariant
+
+## [6] Wait-bound timer — the hold ends at the bound measured from arrival
+
+Implemented T6 so a request whose target never becomes healthy cannot hang forever. `Pipeline.Handle` now derives a per-request deadline context from `Pending.Arrival.Add(waitBound)` and passes it to `WaitHealthyOr`; on expiry the client gets a `504` naming `wait_bound` with the configured bound in `limit` (FR-8, ADR-0009, ADR-0014). The deadline is computed once from the immutable arrival, so a wake attempt cannot restart or extend it, and each request owns its own context so one expiry leaves the others alone (RS-5). The false return is disambiguated in order — closed `Discarded` is a client departure (write nothing, FR-7), a cancelled process context is shutdown (write nothing, FR-16), and only `DeadlineExceeded` writes the 504. `NewPipeline` takes just the `waitBound` value rather than the whole config, keeping the dependency to what the pipeline uses.
+
+Steps taken:
+- Added `waitBound` to `Pipeline` and `NewPipeline`, and passed `cfg.WaitBound` from `cmd/tcp-wake`.
+- Wrapped the health wait in `context.WithDeadline(pl.ctx, p.Arrival.Add(pl.waitBound))` with `defer cancel()`.
+- Disambiguated the false return into disconnect, shutdown, and expiry, writing the 504 only for expiry.
+- Added eight tests in `internal/proxy/waitbound_test.go` and updated the `NewPipeline` call sites.
+- Ran three mutations (no deadline; anchor to `time.Now()`; treat a disconnect as an expiry) that each turned the expected test red.
+- Ran the FR-8 tests five times under `-race` for stability.
+- Smoke-tested a permanent-503 target: a 504 after 2.00 s with `component:wait_bound` and `limit:2s`, one wake execution.
+
+Decisions:
+- [Anchored the deadline to `Pending.Arrival`, computed once, making a timer restart by a wake attempt structurally impossible.
+- [Used a context deadline instead of a new goroutine or timer type; `WaitHealthyOr` already selects on the context and `defer cancel()` releases the timer.
+- [Ordered the guards so only `DeadlineExceeded` writes the 504; a disconnect and a shutdown stay silent.
+- [Let a healthy belief at the boundary win, since `WaitHealthyOr` reads the belief before selecting.
+- [Passed the `waitBound` value into `NewPipeline` rather than re-introducing the whole config removed by the review.
+- [Used `waitBound.String()` as the limit (`2m0s` for the default 120s), consistent with the 413's `ByteSize.String()`; T8 owns exact-body assertions.
+
+Changes:
+- internal/proxy/pipeline.go: arrival-anchored deadline, disconnect/shutdown/expiry disambiguation, 504
+- internal/proxy/waitbound_test.go: eight FR-8 tests and net.Pipe helpers
+- internal/proxy/wake_test.go: `NewPipeline` call sites pass a bound
+- cmd/tcp-wake/main.go: pass `cfg.WaitBound`
+- docs/implementation-plan.md: ticked T6
+- AGENTS.md: T6 deadline and timing-test learnings
+- docs/log.md: appended this entry
+
+Next steps:
+- T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
+- T8 — Error responses: the four JSON bodies and the one-response-per-request invariant
+
