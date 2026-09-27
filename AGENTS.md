@@ -21,3 +21,15 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   Alpine's musl gives a misleading `not found` on a glibc dynamic binary.
 - **Environment.** Arch Linux VM; `arch` user is in the `docker` group; Docker
   29.8.1 with daemon active. `sudo` is available for root-owned artifacts.
+
+# Workflow and process
+- **Commit format:** the user wants `[<n>] <Summarized task title> <Summary of Change>`,
+  and a push after each milestone.
+- **Plan tracking:** tick each task's checkbox in `docs/implementation-plan.md` as it
+  lands, and append a dated entry to `docs/log.md`.
+- **Traceability check** (the only check that exists so far):
+  `python3 scripts/check_traceability.py docs/specs/SRS.md docs/architecture.md`
+  — note the spec is at `docs/specs/SRS.md`, not `specs/SRS.md`. It must exit 0.
+- **Repo state:** there is no Go module yet (T2 creates it), so there are no Go
+  linters or tests to run. The `scripts/` dir holds the traceability checker.
+- **Don't commit build artifacts.** T1's `stub`/`stub.c` are gitignored.
