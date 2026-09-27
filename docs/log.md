@@ -237,3 +237,37 @@ Next steps:
 - T5 — Wake trigger: exec `wake_command` once per triggering request, report its exit status
 - T6 — Wait-bound timer measured from arrival and never restarted
 - T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
+
+## [4] Health state and Probe — a two-state belief written only by a probe
+
+Implemented the health belief and the probe that is its only writer. `Health` holds healthy/not healthy and starts not healthy, matching a fresh process; `observe(ready)` is unexported, so no other block—the forwarder included—can infer the state from a failure's cause (ADR-0008). `WaitHealthyOr(ctx, done)` blocks until the belief is healthy, the request is discarded, or shutdown, using a close-and-replace broadcast channel so a waiter cannot miss a transition. `Prober` polls `health_path` on `target_address` at `probe_interval` with `probe_timeout` while a request is pending, exits on the first ready observation so a healthy target is never probed on a timer, and stops when the last pending request leaves (FR-12). Ready is HTTP 200 with body `{"status":"ok"}`; any other status, any other body, a timeout, or a transport error is not healthy (FR-10, FR-11, IF-3). `ProbeNow` runs one probe and sets the state from the result—the FR-19 call the forwarder will make after a 502. `cmd/tcp-wake` now wires the belief and prober into the hold-only handler, which releases on the first ready observation and still writes nothing until T5/T6/T7 replace it.
+
+Steps taken:
+- Added `internal/proxy/health.go`: `Health` (mutex-guarded belief, unexported `observe`, `WaitHealthyOr`) and `Prober` (pending-gated cadence loop, `ProbeNow`, `Close`).
+- Added `internal/proxy/probe.go`: `httpProbe` with a per-attempt fresh connection, `probe_timeout` via context, a 256 B body cap, and the exact ready-body check.
+- Wired `cmd/tcp-wake/main.go` to `prober.RequestStarted`/`RequestDone` and `health.WaitHealthyOr(ctx, p.Discarded())`, holding when not healthy.
+- Wrote 11 tests and ran two mutations (loop that does not exit on ready; loop that does not stop when pending drops); both turned the expected test red.
+- Smoke-tested: zero probes while idle; probes to `/health` begin only once a request is held; the client receives zero bytes while held; the connection releases when `/health` turns ready.
+
+Decisions:
+- [Kept `observe` unexported so ADR-0008's "observation is the only writer" is structural, not conventional.
+- [Started the cadence loop only for the first pending request and never while already healthy, so a healthy target gets no timer probes (ADR-0008, FR-12).
+- [Probed immediately at loop start, then every interval; ADR-0007's worst case (interval + timeout) is unaffected and the common case detects a just-became-ready target sooner.
+- [Exited the loop on the first ready observation; a later transport failure re-arms probing through `ProbeNow` and the next request.
+- [Used a close-and-replace channel for the transition broadcast to avoid missed wakeups under the mutex.
+- [Disabled HTTP keep-alives for the probe because the target may be mid-boot and a reused socket would be misleading.
+- [Bounded the health body read at 256 B and compared with `strings.TrimSpace`, tolerating only surrounding whitespace per IF-3.
+
+Changes:
+- internal/proxy/health.go: new `Health` and `Prober`
+- internal/proxy/probe.go: new `httpProbe`
+- internal/proxy/health_test.go: 11 tests named for FR-10/FR-11/FR-12/FR-19/IF-3 and the ADR-0008 rule
+- cmd/tcp-wake/main.go: hold-only handler now waits on the health belief
+- docs/implementation-plan.md: ticked T4
+- docs/log.md: appended this entry
+- AGENTS.md: recorded the T4 learnings
+
+Next steps:
+- T5 — Wake trigger: exec `wake_command` once per triggering request, report its exit status
+- T6 — Wait-bound timer measured from arrival and never restarted
+- T7 — Forwarder: verbatim upstream write, streamed relay, parallel release

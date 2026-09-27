@@ -27,7 +27,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   Accept on `listen_address` and return the response over the same connection (IF-1); retain the request as raw wire bytes; detect completion by framing without parsing; enforce `held_body_cap` with a 413 naming the cap; discard a held request whose client closes its connection (FR-7); set no read or write deadline anywhere.
   Verify: `go test ./...` — byte-exact retention of a request with odd header casing and order; a body over the cap gets 413; a held connection has no deadline set; a client that closes while held leaves the held set and is never forwarded.
 
-- [ ] **T4 — Health state and Probe (FR-10, FR-11, FR-19, IF-3, ADR-0007, ADR-0008).**
+- [x] **T4 — Health state and Probe (FR-10, FR-11, FR-19, IF-3, ADR-0007, ADR-0008).**
   Probe `health_path` on `target_address` at `probe_interval` with `probe_timeout` while a request is pending; ready is 200 with body `{"status":"ok"}`; any other status or a timeout means not healthy; the state changes only from a probe result, never inferred from a failure's cause.
   Verify: `go test ./...` — a fake target answering 200/503/timeout drives the state correctly; no timer runs while no request is pending (FR-12).
 

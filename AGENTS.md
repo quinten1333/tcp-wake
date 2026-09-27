@@ -67,6 +67,34 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   read deadline must guard the test, or a regression that stops rejecting an
   over-cap request hangs the suite until the 10-minute go-test timeout.
 
+- **T4 / Health state and Probe.** `internal/proxy/health.go` holds both the
+  belief (`Health`) and the cadence runner (`Prober`); `probe.go` holds the HTTP
+  observation. `Health.observe(ready)` is **unexported on purpose**: a probe
+  result is the only input the state accepts, so ADR-0008's "never infer from a
+  failure's cause" is structural — no exported setter exists for the forwarder to
+  misuse. `WaitHealthyOr(ctx, done)` blocks until healthy, `done` (the request's
+  `Discarded()`), or ctx; it uses a close-and-replace broadcast channel so a
+  waiter cannot miss a transition. A new process starts not healthy (FR-16).
+- **T4 / probe gating (FR-12, ADR-0008).** `Prober.RequestStarted` starts the
+  loop only on the 0->1 pending edge and only while `!health.Healthy()`;
+  `RequestDone` stops it at pending 0. The loop probes **immediately**, then every
+  `probe_interval`, and exits on the **first ready** observation, so a healthy
+  target is never probed on a timer. `ProbeNow` runs one probe and sets the state
+  from the result — the FR-19 seam T7 calls after a 502; it does not start the
+  loop. `pending`/`running`/`stop` are all guarded by `Prober.mu`, and
+  `stopLocked` clears `running` before returning so a `RequestDone`/`Close` race
+  closes the stop channel exactly once.
+- **T4 / HTTP probe details.** Ready is HTTP 200 **and** body
+  `{"status":"ok"}` (IF-3); other status, other body, timeout, and transport error
+  are all not healthy (FR-11). `httpProbe` uses `context.WithTimeout` for
+  `probe_timeout`, `DisableKeepAlives` (the target may be mid-boot), a 256 B
+  `io.LimitReader` on the body, and always closes it. The URL is
+  `strings.TrimRight(target, "/") + path`. The probe function is a struct field
+  (`probeFn`) so white-box tests replace it with a stub for cadence/gating tests.
+- **T4 / test gotcha.** An httptest server whose handler blocks forever will hang
+  `srv.Close()` (it waits for the abandoned request) until the 10-minute go-test
+  timeout. Release the handler **before** closing the server, e.g.
+  `defer func() { close(release); srv.Close() }()`.
 - **Linting.** There is no `golangci-lint`/config; `gofmt -l .` and `go vet ./...`
   are the linters. Run `go test -count=1 ./...` (and optionally `-race`) when a
   cached PASS could mask a change.
