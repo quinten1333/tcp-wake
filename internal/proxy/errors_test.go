@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -130,8 +129,8 @@ func errorBody(t *testing.T, r recordedResponse) errorDetail {
 }
 
 // TestWriteErrorIsSingleWellFormedResponse checks the seam itself: writeError
-// emits one complete, self-describing response whose Content-Length matches the
-// body it writes, so a client never waits for bytes that will not come.
+// emits one complete, self-describing response, which parseErrorResponse
+// validates against the shared ADR-0009 framing.
 func TestWriteErrorIsSingleWellFormedResponse(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
@@ -145,25 +144,12 @@ func TestWriteErrorIsSingleWellFormedResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading response: %v", err)
 	}
-	head, body, ok := strings.Cut(string(data), "\r\n\r\n")
-	if !ok {
-		t.Fatalf("response has no header terminator: %q", data)
+	status, detail := parseErrorResponse(t, data)
+	if status != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", status)
 	}
-	if got := strings.Count(head, "HTTP/1.1 "); got != 1 {
-		t.Fatalf("found %d status lines, want exactly 1:\n%s", got, head)
-	}
-	if !strings.HasPrefix(head, "HTTP/1.1 502 ") {
-		t.Fatalf("status line is not a 502:\n%s", head)
-	}
-	if !strings.Contains(head, "Content-Type: application/json") {
-		t.Errorf("response does not declare its JSON type:\n%s", head)
-	}
-	if !strings.Contains(head, "Connection: close") {
-		t.Errorf("response does not close the connection:\n%s", head)
-	}
-	wantLen := len(body)
-	if !strings.Contains(head, "Content-Length: "+strconv.Itoa(wantLen)) {
-		t.Errorf("Content-Length does not match the %d-byte body:\n%s", wantLen, head)
+	if detail.Component != componentTarget {
+		t.Errorf("component = %q, want %q", detail.Component, componentTarget)
 	}
 }
 

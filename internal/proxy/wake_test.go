@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,12 +243,12 @@ func TestFR17ClientGets500NamingWakeCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the 500 response: %v", err)
 	}
-	resp := string(data)
-	if !strings.HasPrefix(resp, "HTTP/1.1 500") {
-		t.Fatalf("response status is not 500:\n%s", resp)
+	status, detail := parseErrorResponse(t, data)
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", status)
 	}
-	if !strings.Contains(resp, `"component":"wake_command"`) {
-		t.Fatalf("500 body does not name the wake command:\n%s", resp)
+	if detail.Component != componentWakeCommand {
+		t.Fatalf("500 body does not name the wake command: %+v", detail)
 	}
 
 	if got := strings.Count(logBuf.String(), "\n"); got != 1 {

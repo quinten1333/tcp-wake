@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -97,14 +98,15 @@ func TestFR8WaitBoundExpiryGets504NamingBound(t *testing.T) {
 	if elapsed < 150*time.Millisecond {
 		t.Fatalf("returned after %v, before the bound", elapsed)
 	}
-	if !strings.HasPrefix(resp, "HTTP/1.1 504") {
-		t.Fatalf("response is not a 504:\n%s", resp)
+	status, detail := parseErrorResponse(t, []byte(resp))
+	if status != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504", status)
 	}
-	if !strings.Contains(resp, `"component":"wait_bound"`) {
-		t.Fatalf("504 body does not name wait_bound:\n%s", resp)
+	if detail.Component != componentWaitBound {
+		t.Fatalf("504 body does not name wait_bound: %+v", detail)
 	}
-	if !strings.Contains(resp, `"limit":"150ms"`) {
-		t.Fatalf("504 body does not carry the bound:\n%s", resp)
+	if detail.Limit != "150ms" {
+		t.Fatalf("504 body does not carry the bound: %+v", detail)
 	}
 }
 
@@ -125,8 +127,8 @@ func TestFR8TimerMeasuredFromArrival(t *testing.T) {
 	if elapsed >= 600*time.Millisecond {
 		t.Fatalf("waited %v; the bound was not measured from arrival", elapsed)
 	}
-	if !strings.Contains(resp, `"component":"wait_bound"`) {
-		t.Fatalf("no wait_bound 504 was written:\n%s", resp)
+	if _, detail := parseErrorResponse(t, []byte(resp)); detail.Component != componentWaitBound {
+		t.Fatalf("no wait_bound 504 was written: %+v", detail)
 	}
 }
 

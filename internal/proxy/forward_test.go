@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -400,13 +401,12 @@ func TestFR18TransportFailureGives502(t *testing.T) {
 	p, client := newPipePending(t)
 	h := startHandle(pl, p, client)
 	h.wait(t)
-	resp := string(h.response(t, p))
-
-	if !strings.HasPrefix(resp, "HTTP/1.1 502") {
-		t.Fatalf("response is not a 502:\n%s", resp)
+	status, detail := parseErrorResponse(t, h.response(t, p))
+	if status != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", status)
 	}
-	if !strings.Contains(resp, `"component":"target"`) {
-		t.Fatalf("502 body does not name the target:\n%s", resp)
+	if detail.Component != componentTarget {
+		t.Fatalf("502 body does not name the target: %+v", detail)
 	}
 }
 

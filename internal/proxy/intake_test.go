@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -171,15 +172,32 @@ func TestIntakeFramingErrorClosesWithoutResponse(t *testing.T) {
 	}
 }
 
+// parseErrorResponse parses a response the proxy wrote itself and asserts the
+// framing all four ADR-0009 bodies share: exactly one status line, a JSON
+// content type, a Content-Length matching the body, and Connection: close. A
+// test then asserts only the status and the ADR-0014 fields that distinguish
+// its condition.
 func parseErrorResponse(t *testing.T, resp []byte) (int, errorDetail) {
 	t.Helper()
 	head, body, ok := strings.Cut(string(resp), "\r\n\r\n")
 	if !ok {
 		t.Fatalf("response has no header terminator: %q", resp)
 	}
+	if got := strings.Count(head, "HTTP/1.1 "); got != 1 {
+		t.Fatalf("found %d status lines, want exactly 1:\n%s", got, head)
+	}
 	var status int
 	if _, err := fmt.Sscanf(head, "HTTP/1.1 %d", &status); err != nil {
 		t.Fatalf("cannot parse status line %q: %v", head, err)
+	}
+	if !strings.Contains(head, "Content-Type: application/json") {
+		t.Errorf("response does not declare its JSON type:\n%s", head)
+	}
+	if !strings.Contains(head, "Content-Length: "+strconv.Itoa(len(body))) {
+		t.Errorf("Content-Length does not match the %d-byte body:\n%s", len(body), head)
+	}
+	if !strings.Contains(head, "Connection: close") {
+		t.Errorf("response does not close the connection:\n%s", head)
 	}
 	var env errorEnvelope
 	if err := json.Unmarshal([]byte(body), &env); err != nil {
