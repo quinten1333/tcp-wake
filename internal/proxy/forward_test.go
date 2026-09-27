@@ -333,14 +333,15 @@ func TestFR4AndFR5AllHeldRequestsForwardInParallel(t *testing.T) {
 	addr, accepted := bootWindowTarget(t, req, resp)
 
 	health := NewHealth()
+	prober, boot := bootingProber(t, health, 5*time.Millisecond)
 	pl := NewPipeline(context.Background(), time.Hour, health,
-		notReadyProber(t, health), wakeStub(t), testForwarder(t, "http://"+addr), NewLogger(io.Discard))
+		prober, wakeStub(t), testForwarder(t, "http://"+addr), NewLogger(io.Discard))
 	l, laddr := startListener(t, testConfig(), pl.Handle)
 
 	const n = 3
 	conns := holdAndServe(t, l, laddr, n)
 
-	health.observe(true) // the boot finishes
+	boot() // the boot finishes; the prober's next probe observes ready
 
 	for _, c := range conns {
 		defer c.Close()
@@ -372,13 +373,14 @@ func TestNFR5EightConcurrentAllGetResponse(t *testing.T) {
 	addr, _ := bootWindowTarget(t, req, resp)
 
 	health := NewHealth()
+	prober, boot := bootingProber(t, health, 5*time.Millisecond)
 	pl := NewPipeline(context.Background(), time.Hour, health,
-		notReadyProber(t, health), wakeStub(t), testForwarder(t, "http://"+addr), NewLogger(io.Discard))
+		prober, wakeStub(t), testForwarder(t, "http://"+addr), NewLogger(io.Discard))
 	l, laddr := startListener(t, testConfig(), pl.Handle)
 
 	const n = 8
 	conns := holdAndServe(t, l, laddr, n)
-	health.observe(true)
+	boot()
 
 	for _, c := range conns {
 		defer c.Close()

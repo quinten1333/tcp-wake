@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,6 +34,20 @@ func readyHandler() http.HandlerFunc {
 // are tested without a socket.
 func stubProber(h *Health, interval time.Duration, fn func(context.Context) bool) *Prober {
 	return &Prober{health: h, interval: interval, probeFn: fn}
+}
+
+// bootingProber is a prober that reports not-ready until the returned boot
+// function is called, then ready. It lets a test control the moment a target
+// finishes booting without racing the cadence loop: calling health.observe(true)
+// directly while a not-ready stub keeps probing can be undone by the stub's
+// next probe.
+func bootingProber(t *testing.T, health *Health, interval time.Duration) (*Prober, func()) {
+	t.Helper()
+	var booted atomic.Bool
+	pr := stubProber(health, interval, func(context.Context) bool { return booted.Load() })
+	t.Cleanup(pr.Close)
+	var once sync.Once
+	return pr, func() { once.Do(func() { booted.Store(true) }) }
 }
 
 // TestFR10ProbeReadySetsHealthy covers FR-10: a ready health endpoint within
