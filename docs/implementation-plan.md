@@ -19,7 +19,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
 
 ## Phase 1 — Core implementation
 
-- [ ] **T2 — Go module, config loader (IF-5, ADR-0011, ADR-0013).**
+- [x] **T2 — Go module, config loader (IF-5, ADR-0011, ADR-0013).**
   Module `tcp-wake`; `Config` struct with TOML tags matching `config.example.toml`; resolve the file by `--config`, then `$TCPWAKE_CONFIG`, then the fixed default `/etc/tcp-wake/config.toml` (ADR-0015); environment overrides as `TCPWAKE_<KEY>` that win over the file; parse and validate durations and sizes at start; a missing, unreadable, or malformed file prevents start with a message naming the key.
   Verify: `go build ./...`, `go vet ./...`, and unit tests for each key, for the override precedence, and for a malformed duration failing start.
 

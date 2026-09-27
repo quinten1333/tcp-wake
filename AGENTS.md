@@ -6,7 +6,7 @@ tcp-wake is a wake-on-demand reverse proxy in Go deployed as a container on
 hyperion in front of hypha (normally powered off). It holds hypha-bound requests
 with no deadline, execs a setuid-root wake command, polls hypha's `/health`, and
 forwards held requests verbatim once healthy. Source of truth: `docs/architecture.md`
-(arc42, 15 ADRs accepted) plus `specs/SRS.md` and `docs/implementation-plan.md`.
+(arc42, 15 ADRs accepted) plus `docs/specs/SRS.md` and `docs/implementation-plan.md`.
 Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-plan.md`.
 
 # Learnings
@@ -21,6 +21,15 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   Alpine's musl gives a misleading `not found` on a glibc dynamic binary.
 - **Environment.** Arch Linux VM; `arch` user is in the `docker` group; Docker
   29.8.1 with daemon active. `sudo` is available for root-owned artifacts.
+- **T2 / config loader.** `internal/config.Load(args, lookupEnv)` resolves the
+  file `--config` -> `$TCPWAKE_CONFIG` -> `/etc/tcp-wake/config.toml` (no CWD
+  fallback, ADR-0015), overlays `TCPWAKE_<KEY>` env vars (env wins, ADR-0011),
+  then parses/validates. Precedence is a merge over raw strings: defaults ->
+  file -> env -> parse. `rawConfig` defaults are pinned to `docs/config.example.toml`
+  by a test; helpers are dependency-injected so tests never touch the real
+  environment or `/etc`. A set-but-empty env override is an error, not a silent
+  fallback; unknown TOML keys fail start. `cmd/tcp-wake/main.go` loads config and
+  exits non-zero on failure.
 
 # Workflow and process
 - **Commit format:** the user wants `[<n>] <Summarized task title> <Summary of Change>`,
@@ -30,6 +39,8 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
 - **Traceability check** (the only check that exists so far):
   `python3 scripts/check_traceability.py docs/specs/SRS.md docs/architecture.md`
   — note the spec is at `docs/specs/SRS.md`, not `specs/SRS.md`. It must exit 0.
-- **Repo state:** there is no Go module yet (T2 creates it), so there are no Go
-  linters or tests to run. The `scripts/` dir holds the traceability checker.
+- **Go module (T2 landed).** Module path `tcp-wake`, Go 1.27.1. Checks before a
+  commit: `gofmt -l .` (must print nothing), `go build ./...`, `go vet ./...`,
+  `go test ./...`. The only third-party dependency is `github.com/BurntSushi/toml`
+  (ADR-0013 permits one small dependency); `go mod tidy` keeps it pinned.
 - **Don't commit build artifacts.** T1's `stub`/`stub.c` are gitignored.

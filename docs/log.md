@@ -73,3 +73,52 @@ Next steps:
 - T2 — Go module and config loader (TOML, env overrides, `--config`/`$TCPWAKE_CONFIG`/default discovery)
 - Then T3–T5 (Listener/Intake, Health state/Probe, Wake trigger)
 - Build the T11 integration harness once core implementation tasks land
+
+## [1] Go module and config loader landed — T2 done
+Created the `tcp-wake` Go module and the config loader that the rest of the
+service reads its key set from, satisfying IF-5, ADR-0011, ADR-0013 and ADR-0015.
+The loader resolves the file by `--config`, then `$TCPWAKE_CONFIG`, then the
+fixed `/etc/tcp-wake/config.toml` (no working-directory fallback), overlays
+`TCPWAKE_<KEY>` environment variables so the environment wins over the file, and
+validates every duration and size at start. A missing, unreadable, unknown-key,
+or malformed file prevents start with a message naming the key.
+
+Steps taken:
+- `go mod init tcp-wake` (go 1.27.1) and added `github.com/BurntSushi/toml v1.6.0`
+- Implemented `internal/config` with typed `Config`, a `ByteSize` IEC parser, an
+  unexported `rawConfig` prefilled with the example file's defaults, a `keyField`
+  binding table shared by env overrides and non-empty validation, `ResolvePath`,
+  and `Load`
+- Added a minimal `cmd/tcp-wake/main.go` that exits non-zero when loading fails
+- Wrote 15 unit tests: per-key file changes, discovery precedence, env-wins over
+  file, env-applies-to-absent-key, empty env override rejected, malformed
+  durations/sizes from both file and environment, unknown key, TOML syntax error,
+  missing file naming the path, `ResolvePath`, `ParseByteSize`, and a reflection
+  guard that the `rawConfig` tags equal the example file's key set
+- Ran mutation checks: disabling env overrides and swallowing malformed durations
+  each turned the expected tests red, then restored
+
+Decisions:
+- [TOML library is `BurntSushi/toml`, the one small dependency ADR-0013 permits
+- [Defaults live in code and are pinned to `docs/config.example.toml` by a test
+- [Precedence is implemented over raw strings: defaults -> file -> env -> parse,
+  which makes "environment wins" a property of the merge, not a presence bitmask
+- [The loader is dependency-injected (`Load(args, lookupEnv)`) so tests never
+  read the real environment or `/etc`
+- [An environment override that is set to empty is an error, never a silent fall
+  back to the file or the default
+
+Changes:
+- go.mod, go.sum: new module and the toml dependency
+- internal/config/config.go, internal/config/config_test.go: the loader and tests
+- cmd/tcp-wake/main.go: entry point that loads config and exits non-zero on error
+- docs/implementation-plan.md: ticked T2
+- AGENTS.md: recorded the config-loader facts and the now-runnable test command
+
+Verification:
+- `gofmt -l .` clean; `go build ./...` and `go vet ./...` pass; `go test ./...` green
+- `python3 scripts/check_traceability.py docs/specs/SRS.md docs/architecture.md` exits 0
+
+Next steps:
+- T3 — Listener and Intake (accept, retain raw bytes, framing, cap, no deadlines)
+- T4 — Health state and Probe; T5 — Wake trigger
