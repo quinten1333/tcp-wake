@@ -30,6 +30,15 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   environment or `/etc`. A set-but-empty env override is an error, not a silent
   fallback; unknown TOML keys fail start. `cmd/tcp-wake/main.go` loads config and
   exits non-zero on failure.
+- **T2 / TOML merge mechanics.** `toml.Decode` into a *pre-filled* struct only
+  overwrites keys present in the file, so "defaults, then file, then env" falls
+  out of decode order — keep `rawConfig` prefilled, don't zero it first. Use the
+  returned `toml.MetaData.Undecoded()` to reject unknown keys. Parse flags with
+  `flag.NewFlagSet(name, flag.ContinueOnError)` and `fs.SetOutput(io.Discard)` so
+  no global `flag.CommandLine` state leaks and usage noise stays out of errors.
+- **Linting.** There is no `golangci-lint`/config; `gofmt -l .` and `go vet ./...`
+  are the linters. Run `go test -count=1 ./...` (and optionally `-race`) when a
+  cached PASS could mask a change.
 
 # Workflow and process
 - **Commit format:** the user wants `[<n>] <Summarized task title> <Summary of Change>`,
