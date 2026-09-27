@@ -122,9 +122,12 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   record file; `failingCommand` exits non-zero); no setuid is needed for tests,
   that is the T14/T15 deployment check. A `-race` run trips if the test reads a
   `bytes.Buffer` the logger is concurrently writing, so shared log capture uses
-  the mutex-guarded `syncBuffer` in `helpers_test.go`. Do not use `pkill -f
-  tcp-wake` patterns in a shell whose own command line contains that string —
-  `pkill -f` matches the shell itself and kills it mid-command.
+  the mutex-guarded `syncBuffer` in `helpers_test.go`. When counting executions,
+  wait on the **log line**, not the record file: the child appends the record
+  before `Run` returns, while `logger.Wake` runs after, so the record can reach
+  the expected count a moment before the line. Do not use `pkill -f tcp-wake`
+  patterns in a shell whose own command line contains that string — `pkill -f`
+  matches the shell itself and kills it mid-command.
 - **Linting.** There is no `golangci-lint`/config; `gofmt -l .` and `go vet ./...`
   are the linters. Run `go test -count=1 ./...` (and optionally `-race`) when a
   cached PASS could mask a change.
@@ -151,4 +154,12 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   stay empty (FR-12); hold one request via bash `/dev/tcp` and probes must begin
   arriving at `health_path` while the client still receives zero bytes. Flip the
   server to `200 {"status":"ok"}` and the held connection must release.
+- **Manual smoke test (wake path, T5).** Point `wake_command` at a local
+  `#!/bin/sh` stub that appends a line to a record file, set `target_address` at
+  a local server answering 503, and start the binary. Hold requests via bash
+  `/dev/tcp`; the record grows by one per request and stdout gets one `wake
+  command=… status=0` line each. Swap the stub for one that `exit 7`s and the
+  client must get an immediate `500` naming `wake_command` with one
+  `status=7` line. Do not `wait` on the proxy/target background jobs — they run
+  until killed; wait only on the client PIDs.
 - **Don't commit build artifacts.** T1's `stub`/`stub.c` are gitignored.
