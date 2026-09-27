@@ -203,6 +203,27 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   `TestADR0014ErrorBodySchema` is the place to add a fifth condition if the set
   ever grows; the FR-8/17/18 tests now only assert status + component on top of
   the shared parser.
+- **T9 / the two log lines.** `internal/proxy/log.go` has `Wake(command,
+  res)` → `<RFC3339> wake command="…" status=…` and `Error(status, detail)` →
+  `<RFC3339> error status=<code> component=<token> message="…"`, both under one
+  mutex so lines never interleave. The error line reuses the ADR-0014
+  `errorDetail`, and `Pipeline.writeAndLog` passes the same value to `writeError`
+  and `Logger.Error`, so the body and the log cannot drift. Only the four
+  response-producing paths are logged; a framing error is not, because it has no
+  response (ADR-0010). The 413 is logged by the `Listener` (it is produced
+  outside the pipeline), which is why `NewListener(cfg, handle, logger)` now
+  takes a logger. `Logger.Ready()` is the SRS §5.6 start-time check: it writes
+  zero bytes (`Write(nil)`) so it cannot pollute the wake-line count, and catches
+  a closed stdout; `main` exits non-zero if it fails.
+- **T9 / no-content rule.** Guarded two ways: a source scan
+  (`TestLoggerNeverTakesContent`) asserts no `Logger` method takes `[]byte`,
+  `*Pending`, or `net.Conn`; and `TestLoggerNoRequestOrResponseContent` drives
+  bodies carrying sentinel tokens through the 502 and relay paths and asserts the
+  tokens are absent from the log. When adding a log line, keep messages built
+  only from configuration and transport errors.
+- **T9 / log-line count assertions.** A failing wake now writes **two** lines
+  (wake + error 500); tests must count by form (`wake command=`,
+  `" error status="`), not by total `\n`, or they will break on the error line.
 - **Naming and exposure (post-T5 review).** The Listener constructor is
   `NewListener`, not `New`, because the package has several constructors and
   `New` was ambiguous. The held set is unexported (`heldSet`/`newHeldSet`,

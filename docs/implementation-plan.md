@@ -47,7 +47,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   The four JSON bodies, each naming the component or limit: 504 the wait bound, 500 the wake command, 502 the unreachable target, 413 the body cap. These four are the only responses the system itself produces, so together with T7's relay they must yield exactly one response per accepted request whose client stays connected (NFR-6).
   Verify: `go test ./...` — each of the four is triggered and its body asserted; the response count across the suite equals the accepted count minus client-abandoned requests.
 
-- [ ] **T9 — Logger (IF-6, FR-3, FR-9, FR-12, ADR-0010).**
+- [x] **T9 — Logger (IF-6, FR-3, FR-9, FR-12, ADR-0010).**
   Text lines to stdout, one per wake execution and one per error; no request or response content ever written.
   Verify: `go test ./...` — line counts match; inspection confirms no body content appears.
 

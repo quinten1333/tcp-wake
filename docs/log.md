@@ -636,3 +636,39 @@ Next steps:
 - T10 — Restart semantics
 - T11–T13 — acceptance suite and RTM
 - T14–T16 — deployment, deployment check, and README
+
+## [9] Logger — the wake and error lines, and the no-content rule
+
+Implemented T9: the Logger now writes one text line per wake execution (IF-6) and one per error (ADR-0010), on stdout, greppable. The wake line already existed; this iteration added the error line, routed all four response-producing error paths through it, made `writeError` take a single `errorDetail` so the client's body and the log line are built once and cannot drift, and added the SRS §5.6 start-time check that an unwritable log prevents start. I also added the executable form of the no-content rule: real request and response bodies carrying sentinel tokens are driven through the paths that log, and the tokens are asserted absent.
+
+Steps taken:
+- Added `Logger.Error(status, errorDetail)` with the line form `error status=<code> component=<token> message=<quoted>` under the same mutex as `Wake`.
+- Added `Logger.Ready()`, a zero-byte write probe so it cannot pollute the FR-3/FR-9/FR-12 line count, and wired it into `cmd/tcp-wake/main.go`.
+- Changed `writeError` to take one `errorDetail`; added `heldBodyCapDetail` and `Pipeline.writeAndLog` so each site writes and logs the same value.
+- Logged the 500, 502, and 504 in `Handle` and the 413 in the Listener (the one error produced outside the pipeline), giving `Listener` a `*Logger`.
+- Added `log_test.go`: the two line forms, `Ready`, the per-path line counts, the sentinel no-content test, the source guard, and FR-12 idle.
+- Smoke-tested the binary: a 300ms wait bound produced one wake line and one 504 line, with the request's sentinel body absent.
+
+Decisions:
+- [Logged exactly the four response-producing error paths; framing errors are not logged, because ADR-0010's "error" is those four and a framing error has no response.
+- [Kept the error line's message identical to the client's body by building one `errorDetail` and passing it to both `writeError` and `Logger.Error`.
+- [Put the 413 log in the Listener rather than threading a logger into `Intake`, since the Listener owns the connection and already holds the config for the cap.
+- [Used `Write(nil)` as the readiness probe: it is side-effect free for `os.File` and catches a closed stdout, the production case; a writer that only fails on non-empty writes is an accepted limitation.
+- [Guarded the no-content rule structurally (no Logger method takes `[]byte`, `*Pending`, or `net.Conn`) and by execution (sentinel tokens through the logging paths).
+
+Changes:
+- internal/proxy/log.go: `Error`, `Ready`, updated doc comment
+- internal/proxy/errors.go: `writeError` takes `errorDetail`; `heldBodyCapDetail`
+- internal/proxy/pipeline.go: build/log the 500, 502, 504 via `writeAndLog`
+- internal/proxy/intake.go: `rejectTooLarge` uses `heldBodyCapDetail`
+- internal/proxy/listener.go: holds a `*Logger`; logs the 413; new `NewListener` signature
+- cmd/tcp-wake/main.go: start-time log check; pass the logger to the listener
+- internal/proxy/log_test.go: new tests
+- internal/proxy/{wake,errors,helpers,deadline}_test.go: updated line-count assertions and call sites, `startListenerLogged`
+- docs/implementation-plan.md: ticked T9
+- docs/log.md: appended this entry
+
+Next steps:
+- T10 — Restart semantics
+- T11–T13 — acceptance suite and RTM
+- T14–T16 — deployment, deployment check, and README
