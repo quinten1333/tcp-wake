@@ -115,4 +115,10 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   `listen_address = "127.0.0.1:18080"`, run `TCPWAKE_CONFIG=/path/tcpwake.toml ./tcp-wake`;
   a raw `GET` sent with bash `/dev/tcp` must receive zero response bytes (the process
   holds it), proving FR-2/FR-6 without a fake hypha.
+- **Manual smoke test (probe path, T4).** Point `target_address` at a throwaway
+  local HTTP server that logs each `GET` and answers 503, set a short
+  `probe_interval`, and start the binary. While nothing is connected the log must
+  stay empty (FR-12); hold one request via bash `/dev/tcp` and probes must begin
+  arriving at `health_path` while the client still receives zero bytes. Flip the
+  server to `200 {"status":"ok"}` and the held connection must release.
 - **Don't commit build artifacts.** T1's `stub`/`stub.c` are gitignored.
