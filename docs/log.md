@@ -672,3 +672,7 @@ Next steps:
 - T10 — Restart semantics
 - T11–T13 — acceptance suite and RTM
 - T14–T16 — deployment, deployment check, and README
+
+### [9] follow-up — a pre-existing race in the held-request tests
+
+The full `-race` suite was flaky before this task (about 2 runs in 20 on the T7 test `TestFR4AndFR5AllHeldRequestsForwardInParallel`). Diagnosis: those tests hold requests while the target is not healthy, then call `health.observe(true)` by hand while a `notReadyProber` stub keeps probing false; the stub's next probe can undo the manual observation, so the waiters never release and the client read times out. Fixed by adding `bootingProber`, which reports not-ready until the test calls its `boot` function and then observes ready, so the cadence loop and the test cannot race. `TestFR4AndFR5` and `TestNFR5EightConcurrentAllGetResponse` now use it; 30 consecutive `-race` runs of both are clean. This is a test-only change; no production code moved.

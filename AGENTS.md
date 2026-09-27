@@ -221,6 +221,13 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   bodies carrying sentinel tokens through the 502 and relay paths and asserts the
   tokens are absent from the log. When adding a log line, keep messages built
   only from configuration and transport errors.
+- **T9 / held-request test race (pre-existing T7 flake).** Tests that hold
+  requests while not healthy and then call `health.observe(true)` by hand are
+  racy: a `notReadyProber` stub's next probe calls `observe(false)` and undoes
+  the manual observation, so the waiters never release and the read times out.
+  Use `bootingProber(t, health, interval)`, which reports not-ready until the
+  returned `boot()` is called and then observes ready, so the cadence loop and
+  the test cannot race. Added in `health_test.go`.
 - **T9 / log-line count assertions.** A failing wake now writes **two** lines
   (wake + error 500); tests must count by form (`wake command=`,
   `" error status="`), not by total `\n`, or they will break on the error line.
