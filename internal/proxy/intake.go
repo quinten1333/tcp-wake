@@ -258,7 +258,7 @@ func rejectTooLarge(conn net.Conn, limit config.ByteSize) {
 	writeError(
 		conn,
 		http.StatusRequestEntityTooLarge,
-		"held_body_cap",
+		componentHeldBodyCap,
 		fmt.Sprintf("request body exceeds the held body cap of %s", limit),
 		limit.String(),
 	)

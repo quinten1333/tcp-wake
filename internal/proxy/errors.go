@@ -8,6 +8,16 @@ import (
 	"net/http"
 )
 
+// The four component tokens of the ADR-0014 error schema. They are an
+// enumerable set, so an agent can branch on them without parsing prose
+// (ADR-0009). Keep them as constants so the code and its tests cannot drift.
+const (
+	componentWaitBound   = "wait_bound"
+	componentWakeCommand = "wake_command"
+	componentTarget      = "target"
+	componentHeldBodyCap = "held_body_cap"
+)
+
 // errorEnvelope is the response-body schema from ADR-0014: a nested error
 // object carrying message, an enumerable component, and, for the two bounded
 // conditions, a limit. It mirrors hypha's own {"error":{"message":…}} envelope
@@ -23,8 +33,20 @@ type errorDetail struct {
 }
 
 // writeError writes one complete HTTP response to conn and leaves the
-// connection open for the caller to close. It is the seam T8 reuses for the
-// other three error paths; T3 uses it for the held-body-cap 413.
+// connection open for the caller to close.
+//
+// It is the only place this system writes a response of its own: the four
+// error paths are the four bodies of ADR-0009, and everything else a client
+// receives is hypha's response relayed verbatim. That single seam is what makes
+// NFR-6 ("exactly one response per accepted request") inspectable. The four
+// paths are the wait bound (504), the wake command (500), a transport-level
+// forward failure (502), and the held body cap (413).
+//
+// limit carries the bounded condition's value as a string: for the wait bound
+// it is the Go canonical duration form ("2m0s" for a 120s configuration) and
+// for the body cap it is ByteSize's IEC form ("64MiB"). Architecture §5.1
+// illustrates the former as "120s"; the value names the configured bound, which
+// is what ADR-0014 requires, and the original TOML spelling is not retained.
 func writeError(conn net.Conn, status int, component, message, limit string) error {
 	body, err := json.Marshal(errorEnvelope{Error: errorDetail{
 		Message:   message,

@@ -50,7 +50,7 @@ func (pl *Pipeline) Handle(p *Pending) {
 		res := pl.wake.Run(pl.ctx)
 		pl.logger.Wake(pl.wake.Command(), res)
 		if res.Err != nil {
-			writeError(p.Conn, http.StatusInternalServerError, "wake_command",
+			writeError(p.Conn, http.StatusInternalServerError, componentWakeCommand,
 				fmt.Sprintf("wake command %q failed: %v", pl.wake.Command(), res.Err), "")
 			return
 		}
@@ -73,7 +73,7 @@ func (pl *Pipeline) Handle(p *Pending) {
 		// the only case a forward can answer, and it also repairs the belief by
 		// a probe rather than by inference (FR-18, FR-19, ADR-0008).
 		if err := pl.forward.Forward(p); err != nil {
-			writeError(p.Conn, http.StatusBadGateway, "target",
+			writeError(p.Conn, http.StatusBadGateway, componentTarget,
 				fmt.Sprintf("target %s is unreachable: %v", pl.forward.Address(), err), "")
 			pl.prober.ProbeNow(pl.ctx)
 		}
@@ -87,7 +87,7 @@ func (pl *Pipeline) Handle(p *Pending) {
 		return
 	}
 	if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-		writeError(p.Conn, http.StatusGatewayTimeout, "wait_bound",
+		writeError(p.Conn, http.StatusGatewayTimeout, componentWaitBound,
 			fmt.Sprintf("target did not become healthy within the wait bound of %s", pl.waitBound),
 			pl.waitBound.String())
 	}
