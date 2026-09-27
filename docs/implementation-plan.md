@@ -35,7 +35,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   Exec `wake_command` once per request received while not healthy; read the exit status; write one log line per execution; a non-zero exit gives that request's client a 500 naming the wake command, immediately.
   Verify: `go test ./...` — a stub command records its invocations; 5 requests in one boot window produce 5 executions; a stub exiting non-zero produces one 500 and one log line.
 
-- [ ] **T6 — Wait-bound timer (FR-8, NFR-1, ADR-0009).**
+- [x] **T6 — Wait-bound timer (FR-8, NFR-1, ADR-0009).**
   Per request, measured from arrival; never restarted by a wake attempt; on expiry the client receives 504 naming the bound.
   Verify: `go test ./...` — a request whose target never answers gets 504 after the bound; a second wake attempt does not extend it.
 

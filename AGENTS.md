@@ -128,6 +128,26 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   the expected count a moment before the line. Do not use `pkill -f tcp-wake`
   patterns in a shell whose own command line contains that string — `pkill -f`
   matches the shell itself and kills it mid-command.
+- **T6 / Wait-bound timer.** `Pipeline.Handle` wraps the health wait in
+  `context.WithDeadline(pl.ctx, p.Arrival.Add(pl.waitBound))`, so the bound is
+  anchored to arrival and computed once — a wake attempt cannot restart it
+  (FR-8). No goroutine or timer type is added; `WaitHealthyOr` already selects
+  on the context and `defer cancel()` releases the timer. The `false` return is
+  disambiguated **in order**: a closed `p.Discarded()` is a client departure
+  (write nothing, FR-7), `pl.ctx.Err() != nil` is shutdown (write nothing,
+  FR-16), and only `errors.Is(waitCtx.Err(), context.DeadlineExceeded)` writes
+  the 504. `WaitHealthyOr` reads the belief before selecting, so a healthy
+  target at the boundary forwards rather than 504s. `NewPipeline` takes the
+  `waitBound` value, not the config. The 504 `limit` is `waitBound.String()`
+  (`2m0s` for the default 120s), consistent with the 413 using
+  `ByteSize.String()`; T8 owns exact-body assertions.
+- **T6 / timing tests.** `waitbound_test.go` drives `Handle` directly over a
+  `net.Pipe` `Pending` (`newPipePending`). net.Pipe is synchronous, so the
+  client reader must run in a goroutine before `Handle` writes or the write
+  blocks: `startHandle` starts the reader and the handler, `wait` blocks on the
+  handler, and `response` closes the server conn so the reader sees EOF. Use
+  bounds of 100–650 ms with generous upper assertions so `-race` runs are not
+  flaky.
 - **Naming and exposure (post-T5 review).** The Listener constructor is
   `NewListener`, not `New`, because the package has several constructors and
   `New` was ambiguous. The held set is unexported (`heldSet`/`newHeldSet`,
