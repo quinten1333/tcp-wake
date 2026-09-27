@@ -23,7 +23,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   Module `tcp-wake`; `Config` struct with TOML tags matching `config.example.toml`; resolve the file by `--config`, then `$TCPWAKE_CONFIG`, then the fixed default `/etc/tcp-wake/config.toml` (ADR-0015); environment overrides as `TCPWAKE_<KEY>` that win over the file; parse and validate durations and sizes at start; a missing, unreadable, or malformed file prevents start with a message naming the key.
   Verify: `go build ./...`, `go vet ./...`, and unit tests for each key, for the override precedence, and for a malformed duration failing start.
 
-- [ ] **T3 — Listener and Intake (FR-2, FR-6, FR-7, FR-13, FR-20, IF-1, NFR-4, ADR-0001, ADR-0004).**
+- [x] **T3 — Listener and Intake (FR-2, FR-6, FR-7, FR-13, FR-20, IF-1, NFR-4, ADR-0001, ADR-0004).**
   Accept on `listen_address` and return the response over the same connection (IF-1); retain the request as raw wire bytes; detect completion by framing without parsing; enforce `held_body_cap` with a 413 naming the cap; discard a held request whose client closes its connection (FR-7); set no read or write deadline anywhere.
   Verify: `go test ./...` — byte-exact retention of a request with odd header casing and order; a body over the cap gets 413; a held connection has no deadline set; a client that closes while held leaves the held set and is never forwarded.
 

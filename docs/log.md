@@ -156,3 +156,45 @@ Next steps:
 - T4 — Health state and Probe against `health_path` at `probe_interval`/`probe_timeout`
 - T5 — Wake trigger: exec `wake_command` once per held request and report its exit status
 - T6 — Wait-bound timer measured from arrival and never restarted
+
+## T3 Complete — Listener and Intake
+
+Implemented the entry of the request data path in a new `internal/proxy` package:
+the Listener accepts on `listen_address`, Intake retains one request as the exact
+wire bytes the client sent, and the HeldSet tracks what is currently held.
+Satisfies FR-2, FR-6, FR-7, FR-13, FR-20, IF-1, and NFR-4, and carries ADR-0001
+(goroutine-per-connection), ADR-0004 (raw wire bytes under the cap), and ADR-0006
+(plain HTTP).
+
+Steps taken:
+- Added `request.go`: `Pending` (Conn, exact Bytes, Arrival, `Discarded()` channel, idempotent `Discard()` via `sync.Once`).
+- Added `heldset.go`: mutex-guarded, uncapped `HeldSet` with `Add`/`Remove`/`Len`/`All`/`CloseAll` (ADR-0012, FR-16).
+- Added `intake.go`: reads header lines with `ReadBytes('\n')` so nothing is read ahead, inspects only `Content-Length`/`Transfer-Encoding` for framing, copies the body verbatim (exact read or chunk framing incl. extensions/trailers). An over-cap `Content-Length` is refused before the body is read; a chunked body is counted against the cap as it arrives, so at most the cap is buffered.
+- Added `errors.go`: the shared ADR-0014 JSON writer, used for the 413 naming `held_body_cap` and the limit; T8 reuses it for the other three.
+- Added `listener.go`: injectable `net.Listen`, per-connection goroutine, Intake then handler; a blocking-Read close watcher discards a request whose client disconnects (FR-7); no deadline is ever set (NFR-4).
+- Wired `cmd/tcp-wake/main.go` to run the listener with a hold-only handler, marked TODO for T4/T5/T7.
+- Wrote 13 tests: byte-exact retention (odd casing/order, chunked, bodyless GET), the cap boundary and both over-cap paths, framing errors with no response, client-close discard, no bytes while held, listener hand-off, the NFR-5 floor of 8 concurrent holds, and two NFR-4 checks (runtime deadline spy + source scan).
+- Smoke-tested the binary: a request while "not healthy" is held with zero response bytes.
+- Mutation-tested: disabling the cap check, the close watcher, or header preservation, and setting a deadline, each turned the expected tests red; restored.
+
+Decisions:
+- [Framing without parsing: only the header/body boundary and the two framing fields are inspected; the retained bytes are the wire bytes.
+- [Client close is detected by a blocking Read, not a deadline, so NFR-4 holds.
+- [The 413 uses the ADR-0014 envelope now, so T8 reuses one writer instead of rewriting.
+- [Framing errors close the connection with no synthetic response; the four JSON bodies are the only responses.
+- [The cap is measured on body bytes, per FR-20 and the `held_body_cap` comment.
+- [`internal/proxy` hosts Listener, Intake, and HeldSet together to avoid import cycles and a split owner for the held set.
+
+Changes:
+- internal/proxy/request.go, heldset.go, intake.go, errors.go, listener.go: new package
+- internal/proxy/{intake,listener,deadline,helpers}_test.go: 13 tests
+- cmd/tcp-wake/main.go: runs the listener with a hold-only handler
+- docs/implementation-plan.md: ticked T3
+- docs/log.md: appended this entry
+- AGENTS.md: recorded the intake/framing, close-detection, and test-wiring facts
+
+Next steps:
+- T4 — Health state and Probe against `health_path` at `probe_interval`/`probe_timeout`
+- T5 — Wake trigger: exec `wake_command` once per triggering request, report its exit status
+- T6 — Wait-bound timer measured from arrival and never restarted
+- T7 — Forwarder: verbatim upstream write, streamed relay, parallel release

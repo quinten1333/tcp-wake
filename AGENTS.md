@@ -36,6 +36,29 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   returned `toml.MetaData.Undecoded()` to reject unknown keys. Parse flags with
   `flag.NewFlagSet(name, flag.ContinueOnError)` and `fs.SetOutput(io.Discard)` so
   no global `flag.CommandLine` state leaks and usage noise stays out of errors.
+- **T3 / Listener and Intake.** The request path lives in `internal/proxy`.
+  Bytes are retained verbatim and never parsed: `Intake` reads header lines one at
+  a time with `bufio.Reader.ReadBytes('\n')` so the reader stops exactly at the
+  body (nothing read ahead), inspects only `Content-Length`/`Transfer-Encoding`
+  for framing, and copies the body unchanged. Chunked bodies count body bytes
+  against `held_body_cap` as they arrive, so at most the cap is buffered; an
+  over-cap request gets the ADR-0014 413 (`component=held_body_cap`, `limit`) from
+  `writeError` in `errors.go`, the seam T8 reuses for the other three errors.
+  A framing error closes the connection with no synthetic response, because the
+  four JSON bodies are the only responses the system produces (ADR-0009).
+- **T3 / detecting a client close without a deadline (NFR-4).** A goroutine blocks
+  in `Read` on the same buffered reader until the client closes, then calls
+  `Pending.Discard()` (idempotent, `sync.Once`) and removes it from the `HeldSet`.
+  No `SetReadDeadline`/`SetWriteDeadline`/`SetDeadline` appears in the package;
+  `TestNFR4NoDeadlineCallsInSource` scans the non-test sources to keep it that way,
+  and `deadlineSpy`/`spyListener` prove it at runtime. `HeldSet` is mutex-guarded
+  and uncapped (ADR-0012); `CloseAll` drains on shutdown.
+- **T3 / test wiring.** `Listener.listen` is injectable, so tests bind
+  `127.0.0.1:0` and learn the port. Tests are white-box (`package proxy`). When a
+  net.Pipe test reads the response, the client write must run in a goroutine and a
+  read deadline must guard the test, or a regression that stops rejecting an
+  over-cap request hangs the suite until the 10-minute go-test timeout.
+
 - **Linting.** There is no `golangci-lint`/config; `gofmt -l .` and `go vet ./...`
   are the linters. Run `go test -count=1 ./...` (and optionally `-race`) when a
   cached PASS could mask a change.
