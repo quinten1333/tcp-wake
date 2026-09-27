@@ -307,3 +307,40 @@ Next steps:
 - T6 — Wait-bound timer measured from arrival and never restarted
 - T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
 
+
+## [5] Wake trigger — one execution and one log line per not-healthy request
+
+Implemented T5: the wake trigger that powers hypha on. `WakeTrigger` execs `wake_command` once for each request received while the target is not healthy, reads the exit status, and reports both a non-zero exit and a launch failure (FR-3, FR-17, IF-4). The command is a single path run directly as a child process — no shell, no argument splitting, stdout and stderr discarded — because ADR-0005 makes the elevated privilege a property of the setuid-root file itself and a shell string would both break setuid and invent an argument grammar nothing specifies. `Logger` writes exactly one greppable line per execution with an RFC3339 timestamp and the status (IF-6, ADR-0010); T9 adds the error line to the same type. `Pipeline` is the request path: a not-healthy request wakes, logs, and on failure returns an immediate 500 naming `wake_command` before any probe or hold; on success it starts the probe and holds. `Pipeline` lives in `internal/proxy` because `writeError` is package-private; T6 and T7 extend `Handle`.
+
+Steps taken:
+- Added `internal/proxy/wake.go` with `WakeResult` and `WakeTrigger`.
+- Added `internal/proxy/log.go` with the narrow `Logger` (wake line only).
+- Added `internal/proxy/pipeline.go` with the request path `Handle`.
+- Rewired `cmd/tcp-wake/main.go` to build the logger, the wake trigger, and the pipeline, and to pass `pl.Handle`.
+- Wrote 9 tests (unit and end-to-end) covering IF-4, FR-3, FR-12, FR-17, IF-6, the direct-exec/no-shell rule, and NFR-7's trigger half.
+- Ran two mutations (skip the FR-17 500; double the log line); each turned the expected test red.
+- Fixed a `-race` data race in the test's own log buffer with a mutex-guarded `syncBuffer`.
+- Smoke-tested: two held requests produced two wake executions and two log lines; a failing command produced a 500 naming `wake_command` and one line with `status=7`.
+
+Decisions:
+- [Treated `wake_command` as one path, exec'd directly; no shell and no argument splitting (ADR-0005 makes privilege a file property, and setuid scripts do not work).
+- [Discarded the command's stdout/stderr so only the one ADR-0010 line describes the execution.
+- [Reported a launch failure (`ExitCode == -1`, `status=launch-failed`) the same way as a non-zero exit, so FR-17 covers a missing or unexecutable command.
+- [Ran the trigger per request and never serialised it, matching FR-3 and RS-6's per-request failure model.
+- [Added only the wake line to `Logger`; the error line and the content inspection stay T9's, so T9 extends the type rather than duplicating it.
+- [Put the request path in `Pipeline` inside `package proxy` so the 500 can use the existing package-private `writeError`; main only wires and passes `Handle`.
+
+Changes:
+- internal/proxy/wake.go: new `WakeResult` and `WakeTrigger`
+- internal/proxy/log.go: new `Logger` with the wake line
+- internal/proxy/pipeline.go: new `Pipeline.Handle` (wake, 500, hold)
+- internal/proxy/wake_test.go: tests for IF-4, FR-3, FR-12, FR-17, IF-6, the no-shell rule, NFR-7
+- internal/proxy/helpers_test.go: added the mutex-guarded `syncBuffer`
+- cmd/tcp-wake/main.go: build logger/wake/pipeline and serve `pl.Handle`
+- docs/implementation-plan.md: ticked T5
+- docs/log.md: appended this entry
+- AGENTS.md: recorded the T5 learnings
+
+Next steps:
+- T6 — Wait-bound timer measured from arrival and never restarted
+- T7 — Forwarder: verbatim upstream write, streamed relay, parallel release

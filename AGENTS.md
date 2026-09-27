@@ -95,6 +95,36 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   `srv.Close()` (it waits for the abandoned request) until the 10-minute go-test
   timeout. Release the handler **before** closing the server, e.g.
   `defer func() { close(release); srv.Close() }()`.
+- **T5 / Wake trigger.** `internal/proxy/wake.go` holds `WakeTrigger`: it
+  execs `cfg.WakeCommand` **directly** as one path — no `sh -c`, no whitespace
+  splitting, no args — because ADR-0005 makes the elevated privilege a property
+  of the setuid-root file, and setuid scripts do not work. The command inherits
+  the process env but its stdout/stderr are set to `nil` (discarded) so only the
+  one ADR-0010 line describes the execution. `WakeResult{Command, ExitCode, Err}`
+  distinguishes a clean exit (0, nil err), a non-zero exit (`*exec.ExitError`
+  with its code), and a launch failure (`ExitCode == -1`, `status=launch-failed`);
+  both failure shapes feed the FR-17 500. `TestWakeExecIsNotShellSplit` pins the
+  no-shell rule by exec'ing a path that contains a space.
+- **T5 / Logger boundary with T9.** `internal/proxy/log.go` has a deliberately
+  narrow `Logger` with only `Wake(command, res)`; T9 adds the error line and the
+  "no request/response content" inspection to the same type rather than
+  reimplementing the wake half. The mutex serialises whole lines under
+  concurrent executions. The line is RFC3339 + `wake command="…" status=…`.
+- **T5 / Pipeline is the request-path seam.** The 500 must be written with the
+  package-private `writeError`, so the path that wakes, writes the 500, starts
+  the probe, and holds lives in `internal/proxy/pipeline.go` as
+  `Pipeline.Handle`; `cmd/tcp-wake` only wires and passes `pl.Handle`. T6 (wait
+  bound) and T7 (forwarder) extend `Handle`, they do not replace it. A wake
+  failure returns before `prober.RequestStarted`, so a failed request never
+  holds.
+- **T5 / test technique and gotcha.** Stub wake commands are `#!/bin/sh` scripts
+  in `t.TempDir()` (`recordingCommand` appends one line per execution to a
+  record file; `failingCommand` exits non-zero); no setuid is needed for tests,
+  that is the T14/T15 deployment check. A `-race` run trips if the test reads a
+  `bytes.Buffer` the logger is concurrently writing, so shared log capture uses
+  the mutex-guarded `syncBuffer` in `helpers_test.go`. Do not use `pkill -f
+  tcp-wake` patterns in a shell whose own command line contains that string —
+  `pkill -f` matches the shell itself and kills it mid-command.
 - **Linting.** There is no `golangci-lint`/config; `gofmt -l .` and `go vet ./...`
   are the linters. Run `go test -count=1 ./...` (and optionally `-race`) when a
   cached PASS could mask a change.

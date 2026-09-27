@@ -31,7 +31,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   Probe `health_path` on `target_address` at `probe_interval` with `probe_timeout` while a request is pending; ready is 200 with body `{"status":"ok"}`; any other status or a timeout means not healthy; the state changes only from a probe result, never inferred from a failure's cause.
   Verify: `go test ./...` — a fake target answering 200/503/timeout drives the state correctly; no timer runs while no request is pending (FR-12).
 
-- [ ] **T5 — Wake trigger (FR-3, FR-12, FR-17, IF-4, NFR-7, ADR-0005, ADR-0010).**
+- [x] **T5 — Wake trigger (FR-3, FR-12, FR-17, IF-4, NFR-7, ADR-0005, ADR-0010).**
   Exec `wake_command` once per request received while not healthy; read the exit status; write one log line per execution; a non-zero exit gives that request's client a 500 naming the wake command, immediately.
   Verify: `go test ./...` — a stub command records its invocations; 5 requests in one boot window produce 5 executions; a stub exiting non-zero produces one 500 and one log line.
 
