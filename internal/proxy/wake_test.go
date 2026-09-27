@@ -169,7 +169,7 @@ func TestFR12NoExecWhileIdle(t *testing.T) {
 	cfg := testConfig()
 	cfg.WakeCommand = cmd
 	prober := stubProber(health, time.Hour, func(context.Context) bool { return false })
-	pl := NewPipeline(context.Background(), health, prober, NewWakeTrigger(cfg), NewLogger(io.Discard))
+	pl := NewPipeline(context.Background(), time.Hour, health, prober, NewWakeTrigger(cfg), NewLogger(io.Discard))
 	defer prober.Close()
 
 	// The pipeline exists and the probe stub is live, but no request is
@@ -190,7 +190,7 @@ func TestFR3FiveRequestsProduceFiveExecutions(t *testing.T) {
 	cfg.WakeCommand = cmd
 	prober := stubProber(health, time.Hour, func(context.Context) bool { return false })
 	logBuf := &syncBuffer{}
-	pl := NewPipeline(context.Background(), health, prober, NewWakeTrigger(cfg), NewLogger(logBuf))
+	pl := NewPipeline(context.Background(), time.Hour, health, prober, NewWakeTrigger(cfg), NewLogger(logBuf))
 	defer prober.Close()
 
 	const n = 5
@@ -229,7 +229,7 @@ func TestFR17ClientGets500NamingWakeCommand(t *testing.T) {
 	prober := stubProber(health, time.Hour, func(context.Context) bool { return false })
 	defer prober.Close()
 	logBuf := &syncBuffer{}
-	pl := NewPipeline(context.Background(), health, prober, NewWakeTrigger(cfg), NewLogger(logBuf))
+	pl := NewPipeline(context.Background(), time.Hour, health, prober, NewWakeTrigger(cfg), NewLogger(logBuf))
 
 	_, addr := startListener(t, cfg, pl.Handle)
 
