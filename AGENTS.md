@@ -155,8 +155,9 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   it through `Listener.heldCount()`. `Handler` returns nothing — the pipeline
   writes its own responses and logs its own errors, so a returned error was dead
   surface. `WakeResult` no longer carries the command (the trigger and logger
-  hold it) and `Pipeline` no longer stores an unused `*config.Config`; T6 will
-  add only the wait bound it needs.
+  hold it) and `Pipeline` stores only the `waitBound` value rather than the whole
+  `*config.Config` (T6 added exactly that one dependency; T7 should follow the
+  same rule and inject the forwarder, not the config).
 - **Linting.** There is no `golangci-lint`/config; `gofmt -l .` and `go vet ./...`
   are the linters. Run `go test -count=1 ./...` (and optionally `-race`) when a
   cached PASS could mask a change.
