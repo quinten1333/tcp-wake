@@ -155,9 +155,35 @@ func appendExact(r *bufio.Reader, raw *[]byte, n int64) error {
 // arrive, so at most the cap is ever buffered.
 func readChunkedBody(r *bufio.Reader, raw *[]byte, limit config.ByteSize) error {
 	var bodyBytes int64
+	return walkChunks(r,
+		func(size int64) error {
+			if size > int64(limit)-bodyBytes {
+				return ErrBodyTooLarge
+			}
+			bodyBytes += size
+			return nil
+		},
+		func(b []byte) error {
+			*raw = append(*raw, b...)
+			return nil
+		},
+	)
+}
+
+// walkChunks reads a chunked body's framing from r. onSize is called with each
+// chunk's declared size after its size line and may abort the walk (Intake uses
+// it for the cap); emit is called with every raw byte in order — each size line,
+// each data run, each CRLF, and the trailer section up to and including its
+// blank line. The same walk therefore buffers a request under the cap (ADR-0004)
+// and streams a response to the client (FR-15). A nil onSize accepts every size.
+func walkChunks(r *bufio.Reader, onSize func(size int64) error, emit func([]byte) error) error {
 	for {
 		sizeLine, err := r.ReadBytes('\n')
-		*raw = append(*raw, sizeLine...)
+		if len(sizeLine) > 0 {
+			if emitErr := emit(sizeLine); emitErr != nil {
+				return emitErr
+			}
+		}
 		if err != nil {
 			return fmt.Errorf("%w: reading chunk size: %v", ErrFraming, err)
 		}
@@ -166,21 +192,28 @@ func readChunkedBody(r *bufio.Reader, raw *[]byte, limit config.ByteSize) error 
 			return err
 		}
 		if size == 0 {
-			return readTrailers(r, raw)
+			return walkTrailers(r, emit)
 		}
-		if size > int64(limit)-bodyBytes {
-			return ErrBodyTooLarge
+		if onSize != nil {
+			if err := onSize(size); err != nil {
+				return err
+			}
 		}
-		bodyBytes += size
 
 		chunk := make([]byte, size)
 		if _, err := io.ReadFull(r, chunk); err != nil {
 			return fmt.Errorf("%w: reading chunk data: %v", ErrFraming, err)
 		}
-		*raw = append(*raw, chunk...)
+		if err := emit(chunk); err != nil {
+			return err
+		}
 
 		crlf, err := r.ReadBytes('\n')
-		*raw = append(*raw, crlf...)
+		if len(crlf) > 0 {
+			if emitErr := emit(crlf); emitErr != nil {
+				return emitErr
+			}
+		}
 		if err != nil {
 			return fmt.Errorf("%w: reading chunk terminator: %v", ErrFraming, err)
 		}
@@ -199,12 +232,16 @@ func parseChunkSize(line []byte) (int64, error) {
 	return n, nil
 }
 
-// readTrailers consumes the trailer section that follows the final zero-length
-// chunk, up to and including its blank line.
-func readTrailers(r *bufio.Reader, raw *[]byte) error {
+// walkTrailers consumes the trailer section that follows the final
+// zero-length chunk, up to and including its blank line, emitting every byte.
+func walkTrailers(r *bufio.Reader, emit func([]byte) error) error {
 	for {
 		line, err := r.ReadBytes('\n')
-		*raw = append(*raw, line...)
+		if len(line) > 0 {
+			if emitErr := emit(line); emitErr != nil {
+				return emitErr
+			}
+		}
 		if err != nil {
 			return fmt.Errorf("%w: reading trailer: %v", ErrFraming, err)
 		}
