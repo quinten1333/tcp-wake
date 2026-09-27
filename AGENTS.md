@@ -53,6 +53,14 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   `TestNFR4NoDeadlineCallsInSource` scans the non-test sources to keep it that way,
   and `deadlineSpy`/`spyListener` prove it at runtime. `HeldSet` is mutex-guarded
   and uncapped (ADR-0012); `CloseAll` drains on shutdown.
+- **T3 / Intake's signature and cap scope.** `Intake(conn, r *bufio.Reader, limit)`
+  takes the reader that the caller (and later the close watcher) shares; calling
+  `bufio.NewReader(conn)` again would discard bytes already buffered and break
+  byte-exactness. The cap is measured on **body** bytes only (FR-20 and the
+  `held_body_cap` comment), not the whole request. `rejectTooLarge` writes the 413
+  and closes the connection inside Intake; the listener's later `conn.Close()` is a
+  harmless double close. `Serve`'s context goroutine needs its own stop channel, or
+  it outlives `Serve` when Accept fails for a non-context reason.
 - **T3 / test wiring.** `Listener.listen` is injectable, so tests bind
   `127.0.0.1:0` and learn the port. Tests are white-box (`package proxy`). When a
   net.Pipe test reads the response, the client write must run in a goroutine and a
@@ -75,4 +83,8 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   commit: `gofmt -l .` (must print nothing), `go build ./...`, `go vet ./...`,
   `go test ./...`. The only third-party dependency is `github.com/BurntSushi/toml`
   (ADR-0013 permits one small dependency); `go mod tidy` keeps it pinned.
+- **Manual smoke test (hold path).** With a TOML holding only
+  `listen_address = "127.0.0.1:18080"`, run `TCPWAKE_CONFIG=/path/tcpwake.toml ./tcp-wake`;
+  a raw `GET` sent with bash `/dev/tcp` must receive zero response bytes (the process
+  holds it), proving FR-2/FR-6 without a fake hypha.
 - **Don't commit build artifacts.** T1's `stub`/`stub.c` are gitignored.
