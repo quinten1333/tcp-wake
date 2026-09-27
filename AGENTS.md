@@ -195,6 +195,14 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   `io.ErrUnexpectedEOF`, so guard with `r.Peek(1) == io.EOF` before each read.
   net.Pipe is synchronous, so the client end must be drained in a goroutine or
   every proxy write blocks.
+- **T8 / shared error-test helpers.** New error-path tests should reuse, not
+  re-implement: `parseErrorResponse(t, resp)` (in `intake_test.go`) asserts the
+  shared ADR-0009 framing and returns `(status, errorDetail)`; `countingPending`
+  (in `errors_test.go`) gives a `Pending` whose writes are recorded by a
+  `responseCounter`, and `oneResponse` asserts exactly one was written.
+  `TestADR0014ErrorBodySchema` is the place to add a fifth condition if the set
+  ever grows; the FR-8/17/18 tests now only assert status + component on top of
+  the shared parser.
 - **Naming and exposure (post-T5 review).** The Listener constructor is
   `NewListener`, not `New`, because the package has several constructors and
   `New` was ambiguous. The held set is unexported (`heldSet`/`newHeldSet`,
