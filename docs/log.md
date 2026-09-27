@@ -494,3 +494,41 @@ Next steps:
 - T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
 - T8 — Error responses: the four JSON bodies and the one-response-per-request invariant
 
+
+## [7] Forwarder — relay held requests to the target over a transparent connection
+
+Implemented T7: the forward path. `Forwarder` dials `target_address` with a bare `net.Dial` (no timeout, because §8.5 and §2 non-goal 7 put connection timeouts on the routing layer and the origin, not here), writes the retained request bytes verbatim, and relays the response back with its framing tracked only to know where it ends. Chunked responses are written segment-by-segment as they arrive (FR-15), `Content-Length` bodies with `io.CopyN`, and length-less bodies until the target closes. Nothing is re-serialised, so FR-13/FR-14 byte-exactness is a property of the copy (ADR-0004). `Forward` returns an error only if it fails before any byte reaches the client, so the pipeline's FR-18 502 is a single response and a mid-body upstream failure just closes the connection (NFR-6). `Pipeline.Handle` now forwards once the target is believed healthy and, on a transport-level failure, writes the 502 naming the target and calls `ProbeNow` so the belief is repaired by observation (FR-19, ADR-0008).
+
+Steps taken:
+- Extracted the shared `walkChunks`/`walkTrailers` chunk state machine and rewired Intake's `readChunkedBody` onto it (committed separately).
+- Added `internal/proxy/forward.go` with `Forwarder`, `NewForwarder` (URL validation at start), `Forward`, and `relayResponse`.
+- Added the forwarder to `Pipeline` and `NewPipeline`, and implemented the forward/502/probe branch in `Handle`.
+- Wired `NewForwarder(cfg.TargetAddress)` into `cmd/tcp-wake`.
+- Added `internal/proxy/forward_test.go` (11 tests) plus `newPipePendingBytes`; updated the `NewPipeline` call sites.
+- Ran four mutations (buffer the chunked response; return an error after the head; skip the probe; drop the verbatim write); each turned the expected test red.
+- Smoke-tested: a healthy target's response came back with the body `HELLO-FROM-HYPHA`; after stopping the target the next request got a `502` naming `target`.
+
+Decisions:
+- [Used a transparent TCP relay rather than `http.Client`: re-serialising would change header order, casing, and framing and fail FR-13 by construction.
+- [Tracked response framing (chunked / Content-Length / until-close) instead of copying to EOF, because the target may keep the connection alive; this is the same non-semantic framing inspection Intake does for requests.
+- [Returned an error only before the first client write, so NFR-6's one-response guarantee holds even when the target dies mid-body.
+- [Ran a probe after a transport failure rather than inferring the belief from the failure (FR-19, ADR-0008).
+- [Set no deadline and used no `DialTimeout` anywhere on the forward path, and added a source-scan test to keep it that way.
+- [Validated `target_address` at start via `NewForwarder`, so a malformed address fails start rather than every request.
+- [Recorded an accepted limitation: a `HEAD` response's `Content-Length` with no body would make the relay wait, because the method is not parsed; HEAD is outside the client profile.
+
+Changes:
+- internal/proxy/forward.go: new `Forwarder` and `relayResponse`
+- internal/proxy/forward_test.go: 11 tests for FR-1/4/5/13/14/15/18/19, IF-2, NFR-5, NFR-6, and the no-timeout rule
+- internal/proxy/intake.go: shared `walkChunks`/`walkTrailers`
+- internal/proxy/pipeline.go: forward, 502, and probe branch
+- internal/proxy/helpers_test.go: `newPipePendingBytes`
+- internal/proxy/{wake,waitbound}_test.go: `NewPipeline` call sites
+- cmd/tcp-wake/main.go: build the forwarder and pass it in
+- docs/implementation-plan.md: ticked T7
+- docs/log.md: appended this entry
+- AGENTS.md: recorded the relay design and gotchas
+
+Next steps:
+- T8 — Error responses: the four JSON bodies and the one-response-per-request invariant
+- T9 — Logger: the error line and the no-content inspection

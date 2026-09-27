@@ -148,6 +148,30 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   handler, and `response` closes the server conn so the reader sees EOF. Use
   bounds of 100–650 ms with generous upper assertions so `-race` runs are not
   flaky.
+- **T7 / Forwarder (transparent relay).** `internal/proxy/forward.go` dials
+  the target with bare `net.Dial` (no timeout — §8.5/§2 non-goal 7) and writes
+  `p.Bytes` verbatim; it never parses or re-serialises the request. The response
+  is relayed with its framing tracked only to know where it ends: chunked via
+  the shared `walkChunks` (each segment written to the client as it arrives,
+  FR-15), `Content-Length` via `io.CopyN`, otherwise `io.Copy` until close. The
+  head is framed **before** it is written, and `Forward` returns an error only
+  before any client byte is written; after that, upstream failures are swallowed
+  so there is exactly one response (NFR-6). A returned error makes the pipeline
+  write the 502 naming `target` and call `ProbeNow` (FR-18/FR-19).
+- **T7 / no timeouts.** Nothing on the forward path sets a deadline or uses
+  `DialTimeout`; `TestForwardNoTimeoutInSource` scans `forward.go` for
+  `DialTimeout`/`Set*Deadline`. Accepted limitation: a `HEAD` response's
+  `Content-Length` with no body would make the relay wait, because the method is
+  never parsed — HEAD is outside the client profile.
+- **T7 / shared chunk walker.** `walkChunks(r, onSize, emit)` in `intake.go` is
+  shared by Intake (cap-enforcing, buffering) and the response relay
+  (uncapped, streaming). If you change chunk framing, both paths change.
+- **T7 / streaming test gotchas.** `TestFR15StreamsChunksUnbuffered` uses a
+  per-chunk handshake: the target writes a chunk, waits for the client's ack,
+  then writes the next, so a buffering regression deadlocks. The client must
+  also drain the terminating `0` chunk **and** the trailer blank line, or the
+  relay blocks writing the trailer and the test hangs. net.Pipe is synchronous,
+  so the reader runs in a goroutine.
 - **Naming and exposure (post-T5 review).** The Listener constructor is
   `NewListener`, not `New`, because the package has several constructors and
   `New` was ambiguous. The held set is unexported (`heldSet`/`newHeldSet`,

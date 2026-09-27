@@ -39,7 +39,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   Per request, measured from arrival; never restarted by a wake attempt; on expiry the client receives 504 naming the bound.
   Verify: `go test ./...` — a request whose target never answers gets 504 after the bound; a second wake attempt does not extend it.
 
-- [ ] **T7 — Forwarder (FR-1, FR-4, FR-5, FR-13, FR-14, FR-15, FR-18, IF-2, NFR-2, NFR-3, NFR-5, ADR-0004).**
+- [x] **T7 — Forwarder (FR-1, FR-4, FR-5, FR-13, FR-14, FR-15, FR-18, IF-2, NFR-2, NFR-3, NFR-5, ADR-0004).**
   Forward a held request to `target_address` over HTTP and relay the response (IF-2); write held bytes verbatim; relay the response verbatim, streaming each chunk as it arrives; on the state becoming healthy, unblock every held request so each opens its own upstream connection without waiting for the others; a transport-level failure gives that client a 502 and triggers a probe; hold at least 8 concurrent requests without discarding any (NFR-5).
   Verify: `go test ./...` — byte-exact forward and response; 3 held requests open 3 upstream connections within 100 ms of each other; a 100-chunk stream arrives unbuffered; a dropped target gives one 502 and then a probe; 8 concurrent requests during one boot window all receive a response.
 
