@@ -13,8 +13,10 @@ import (
 
 // Handler receives a request once Intake has retained it. It must not write to
 // the client while the request is held (FR-2, FR-6); it returns when the
-// request has been released, answered, or abandoned.
-type Handler func(*Pending) error
+// request has been released, answered, or abandoned. It returns nothing: the
+// pipeline writes its own responses and logs its own errors, so a returned
+// error would be dead surface.
+type Handler func(*Pending)
 
 // Listener accepts client connections on the configured address and hands each
 // retained request to the handler. One goroutine serves one connection, so a
@@ -22,7 +24,7 @@ type Handler func(*Pending) error
 // NFR-4).
 type Listener struct {
 	cfg    *config.Config
-	held   *HeldSet
+	held   *heldSet
 	handle Handler
 
 	// listen is net.Listen in production and is injectable so tests can bind
@@ -30,20 +32,21 @@ type Listener struct {
 	listen func(network, address string) (net.Listener, error)
 }
 
-// New builds a Listener for cfg. handle is invoked for every request that
-// Intake retains.
-func New(cfg *config.Config, handle Handler) *Listener {
+// NewListener builds a Listener for cfg. handle is invoked for every request
+// that Intake retains.
+func NewListener(cfg *config.Config, handle Handler) *Listener {
 	return &Listener{
 		cfg:    cfg,
-		held:   NewHeldSet(),
+		held:   newHeldSet(),
 		handle: handle,
 		listen: net.Listen,
 	}
 }
 
-// Held exposes the held set so the pipeline and tests can observe membership.
-func (l *Listener) Held() *HeldSet {
-	return l.held
+// heldCount reports how many requests are currently held. It is a read-only
+// observation seam for tests.
+func (l *Listener) heldCount() int {
+	return l.held.count()
 }
 
 // Serve accepts connections until ctx is cancelled or the listener fails. On
@@ -75,7 +78,7 @@ func (l *Listener) Serve(ctx context.Context) error {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				break
 			}
-			l.held.CloseAll()
+			l.held.closeAll()
 			wg.Wait()
 			return fmt.Errorf("proxy: accept: %w", err)
 		}
@@ -86,7 +89,7 @@ func (l *Listener) Serve(ctx context.Context) error {
 		}(conn)
 	}
 
-	l.held.CloseAll()
+	l.held.closeAll()
 	wg.Wait()
 	return nil
 }
@@ -103,15 +106,15 @@ func (l *Listener) serveConn(conn net.Conn) {
 		return
 	}
 
-	l.held.Add(p)
+	l.held.add(p)
 	go l.watchClient(p)
 	defer func() {
 		p.Discard()
-		l.held.Remove(p)
+		l.held.remove(p)
 		conn.Close()
 	}()
 
-	_ = l.handle(p)
+	l.handle(p)
 }
 
 // watchClient blocks in Read until the client closes its connection or sends
@@ -123,7 +126,7 @@ func (l *Listener) watchClient(p *Pending) {
 	for {
 		if _, err := p.reader.Read(buf); err != nil {
 			p.Discard()
-			l.held.Remove(p)
+			l.held.remove(p)
 			return
 		}
 	}

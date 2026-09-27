@@ -42,7 +42,7 @@ func intakeOnce(t *testing.T, req string, limit config.ByteSize) *Pending {
 // it and the address a client can dial. The listener is cancelled on cleanup.
 func startListener(t *testing.T, cfg *config.Config, h Handler) (*Listener, string) {
 	t.Helper()
-	l := New(cfg, h)
+	l := NewListener(cfg, h)
 	addrCh := make(chan string, 1)
 	l.listen = func(network, address string) (net.Listener, error) {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -74,9 +74,13 @@ func startListener(t *testing.T, cfg *config.Config, h Handler) (*Listener, stri
 	}
 }
 
+// testConfig returns a config with valid positive cadences so a test that
+// starts the real Prober loop cannot hit time.NewTicker's non-positive panic.
 func testConfig() *config.Config {
 	return &config.Config{
 		ListenAddress: "127.0.0.1:0",
+		ProbeInterval: time.Second,
+		ProbeTimeout:  time.Second,
 		HeldBodyCap:   testCap,
 	}
 }
@@ -114,12 +118,11 @@ type blockOnDiscard struct {
 	got []*Pending
 }
 
-func (b *blockOnDiscard) handle(p *Pending) error {
+func (b *blockOnDiscard) handle(p *Pending) {
 	b.mu.Lock()
 	b.got = append(b.got, p)
 	b.mu.Unlock()
 	<-p.Discarded()
-	return nil
 }
 
 func (b *blockOnDiscard) count() int {

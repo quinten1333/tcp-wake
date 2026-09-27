@@ -344,3 +344,48 @@ Changes:
 Next steps:
 - T6 — Wait-bound timer measured from arrival and never restarted
 - T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
+
+## [5] SOLID review cleanup — remove dead surface and tighten naming
+
+Reviewed the whole package against SOLID and cleaned the accumulated mess. The
+main finding was dead surface: `WakeResult.Command` was written but never read
+(the logger takes the command separately), `Pipeline` stored a `*config.Config`
+it never used, `HeldSet.All` was never called, and `Handler` returned an `error`
+that `serveConn` discarded. The held set was also exported although it is an
+implementation detail of the Listener, and the Listener constructor was the
+ambiguous `New` in a package with six constructors. Fixed all of these, updated
+the package doc to name the health/probe/wake/pipeline blocks, and made the test
+config carry valid cadences so a test that starts the real Prober loop cannot
+panic on `time.NewTicker(0)`. No behaviour changed; `go test -race` and the
+traceability check stay green.
+
+Steps taken:
+- Removed `WakeResult.Command` and the unused `Pipeline.cfg` field (and its `NewPipeline` parameter).
+- Removed the unused `HeldSet.All`, unexported the set to `heldSet` (`newHeldSet`, `add`, `remove`, `count`, `closeAll`), and replaced `Listener.Held()` with `heldCount()`.
+- Renamed `proxy.New` to `proxy.NewListener`; updated `main` and the tests.
+- Changed `Handler`/`Pipeline.Handle` to return nothing, since no caller used the error.
+- Updated the `package proxy` doc comment to describe every block.
+- Gave `testConfig()` a positive `ProbeInterval`/`ProbeTimeout` to remove a latent `time.NewTicker` panic.
+- Recorded the naming/exposure rules in AGENTS.md.
+
+Decisions:
+- [Removed the `Handler` error return rather than inventing a consumer: the pipeline writes responses and logs inside `Handle`, so the return was dead (ISP).
+- [Unexported the held set: nothing outside the package observes it, and the Listener already owns it (encapsulation).
+- [Named the constructor `NewListener` for clarity now that the package has several types (SRP in naming).
+- [Did not pre-empt T8's error-response consolidation or T6's wait-bound field; left those to their tasks to avoid rework.
+
+Changes:
+- internal/proxy/heldset.go: unexported `heldSet`, dropped `All`
+- internal/proxy/listener.go: `NewListener`, `heldSet`, `heldCount`, `Handler` without error
+- internal/proxy/pipeline.go: dropped `cfg`, `Handle` returns nothing
+- internal/proxy/wake.go: dropped `WakeResult.Command`
+- internal/proxy/request.go: updated package doc
+- internal/proxy/helpers_test.go: valid test cadences; handler signature
+- internal/proxy/{listener,deadline,wake}_test.go: updated call sites
+- cmd/tcp-wake/main.go: `proxy.NewListener`, `NewPipeline` without cfg
+- AGENTS.md: naming/exposure rules
+- docs/log.md: appended this entry
+
+Next steps:
+- T6 — Wait-bound timer measured from arrival and never restarted
+- T7 — Forwarder: verbatim upstream write, streamed relay, parallel release

@@ -10,9 +10,8 @@ import (
 // HTTP and handing the retained bytes to the pipeline over the same connection.
 func TestIF1ListenerHandsOffRequest(t *testing.T) {
 	got := make(chan string, 1)
-	_, addr := startListener(t, testConfig(), func(p *Pending) error {
+	_, addr := startListener(t, testConfig(), func(p *Pending) {
 		got <- string(p.Bytes)
-		return nil
 	})
 
 	conn := get(t, addr)
@@ -33,14 +32,13 @@ func TestIF1ListenerHandsOffRequest(t *testing.T) {
 // request is held (FR-6).
 func TestFR6NoBytesSentWhileHeld(t *testing.T) {
 	release := make(chan struct{})
-	l, addr := startListener(t, testConfig(), func(p *Pending) error {
+	l, addr := startListener(t, testConfig(), func(p *Pending) {
 		<-release
-		return nil
 	})
 
 	conn := get(t, addr)
 	defer conn.Close()
-	waitFor(t, "request held", func() bool { return l.Held().Len() == 1 })
+	waitFor(t, "request held", func() bool { return l.heldCount() == 1 })
 
 	if err := conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
 		t.Fatal(err)
@@ -62,13 +60,13 @@ func TestFR7ClientCloseDiscardsHeldRequest(t *testing.T) {
 	l, addr := startListener(t, testConfig(), h.handle)
 
 	conn := get(t, addr)
-	waitFor(t, "request held", func() bool { return l.Held().Len() == 1 })
+	waitFor(t, "request held", func() bool { return l.heldCount() == 1 })
 	waitFor(t, "handler invoked", func() bool { return h.count() == 1 })
 	p := h.first()
 
 	conn.Close()
 
-	waitFor(t, "held set empty after client close", func() bool { return l.Held().Len() == 0 })
+	waitFor(t, "held set empty after client close", func() bool { return l.heldCount() == 0 })
 	select {
 	case <-p.Discarded():
 	case <-time.After(2 * time.Second):
@@ -88,11 +86,11 @@ func TestHoldAtLeastEightConcurrent(t *testing.T) {
 	for i := 0; i < n; i++ {
 		conns = append(conns, get(t, addr))
 	}
-	waitFor(t, "eight requests held", func() bool { return l.Held().Len() == n })
+	waitFor(t, "eight requests held", func() bool { return l.heldCount() == n })
 	waitFor(t, "eight handlers invoked", func() bool { return h.count() == n })
 
 	for _, c := range conns {
 		c.Close()
 	}
-	waitFor(t, "held set empty", func() bool { return l.Held().Len() == 0 })
+	waitFor(t, "held set empty", func() bool { return l.heldCount() == 0 })
 }

@@ -11,9 +11,9 @@ import (
 
 // WakeResult is the outcome of one wake-command execution. ExitCode is 0 for a
 // clean exit, the process's code for a non-zero exit, and -1 when the command
-// could not be launched at all. Err is nil only for a clean exit.
+// could not be launched at all. Err is nil only for a clean exit. The command
+// itself is not carried here: the trigger and the logger already hold it.
 type WakeResult struct {
-	Command  string
 	ExitCode int
 	Err      error
 }
@@ -57,7 +57,7 @@ func (w *WakeTrigger) Run(ctx context.Context) WakeResult {
 	cmd.Stderr = nil
 
 	err := cmd.Run()
-	res := WakeResult{Command: w.command, ExitCode: 0, Err: nil}
+	res := WakeResult{}
 	if err == nil {
 		return res
 	}

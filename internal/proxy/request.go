@@ -1,7 +1,10 @@
 // Package proxy implements the tcp-wake request pipeline. The blocks here are
 // the Listener (accept a client connection), Intake (retain one request as the
-// exact wire bytes the client sent), and the HeldSet (the in-memory set of
-// requests currently held).
+// exact wire bytes the client sent), the held set (the in-memory set of
+// requests currently held), the Health belief and its Prober (the target's
+// readiness, written only by a probe), the WakeTrigger (one command execution
+// per request received while not healthy), the Logger (one line per execution),
+// and the Pipeline that orders them along the request path.
 //
 // Bytes are never parsed into a request object: the header/body boundary and
 // the two framing fields (Content-Length, Transfer-Encoding) are inspected so

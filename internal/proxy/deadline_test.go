@@ -71,9 +71,8 @@ func (s *spyListener) calls() int {
 // TestNFR4ListenerSetsNoDeadline holds a request through the real listener and
 // asserts no read or write deadline was ever set on the client connection.
 func TestNFR4ListenerSetsNoDeadline(t *testing.T) {
-	l := New(testConfig(), func(p *Pending) error {
+	l := NewListener(testConfig(), func(p *Pending) {
 		<-p.Discarded()
-		return nil
 	})
 
 	addrCh := make(chan string, 1)
@@ -102,9 +101,9 @@ func TestNFR4ListenerSetsNoDeadline(t *testing.T) {
 
 	addr := <-addrCh
 	conn := get(t, addr)
-	waitFor(t, "request held", func() bool { return l.Held().Len() == 1 })
+	waitFor(t, "request held", func() bool { return l.heldCount() == 1 })
 	conn.Close()
-	waitFor(t, "held set empty", func() bool { return l.Held().Len() == 0 })
+	waitFor(t, "held set empty", func() bool { return l.heldCount() == 0 })
 
 	if got := sl.calls(); got != 0 {
 		t.Fatalf("deadline set %d time(s) on a held connection, want 0 (NFR-4)", got)

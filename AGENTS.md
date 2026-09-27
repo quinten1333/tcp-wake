@@ -48,11 +48,11 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   four JSON bodies are the only responses the system produces (ADR-0009).
 - **T3 / detecting a client close without a deadline (NFR-4).** A goroutine blocks
   in `Read` on the same buffered reader until the client closes, then calls
-  `Pending.Discard()` (idempotent, `sync.Once`) and removes it from the `HeldSet`.
+  `Pending.Discard()` (idempotent, `sync.Once`) and removes it from the unexported `heldSet`.
   No `SetReadDeadline`/`SetWriteDeadline`/`SetDeadline` appears in the package;
   `TestNFR4NoDeadlineCallsInSource` scans the non-test sources to keep it that way,
-  and `deadlineSpy`/`spyListener` prove it at runtime. `HeldSet` is mutex-guarded
-  and uncapped (ADR-0012); `CloseAll` drains on shutdown.
+  and `deadlineSpy`/`spyListener` prove it at runtime. `heldSet` is mutex-guarded
+  and uncapped (ADR-0012); `closeAll` drains on shutdown.
 - **T3 / Intake's signature and cap scope.** `Intake(conn, r *bufio.Reader, limit)`
   takes the reader that the caller (and later the close watcher) shares; calling
   `bufio.NewReader(conn)` again would discard bytes already buffered and break
@@ -128,6 +128,15 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   the expected count a moment before the line. Do not use `pkill -f tcp-wake`
   patterns in a shell whose own command line contains that string — `pkill -f`
   matches the shell itself and kills it mid-command.
+- **Naming and exposure (post-T5 review).** The Listener constructor is
+  `NewListener`, not `New`, because the package has several constructors and
+  `New` was ambiguous. The held set is unexported (`heldSet`/`newHeldSet`,
+  `add`/`remove`/`count`/`closeAll`) since it is a Listener detail; tests observe
+  it through `Listener.heldCount()`. `Handler` returns nothing — the pipeline
+  writes its own responses and logs its own errors, so a returned error was dead
+  surface. `WakeResult` no longer carries the command (the trigger and logger
+  hold it) and `Pipeline` no longer stores an unused `*config.Config`; T6 will
+  add only the wait bound it needs.
 - **Linting.** There is no `golangci-lint`/config; `gofmt -l .` and `go vet ./...`
   are the linters. Run `go test -count=1 ./...` (and optionally `-race`) when a
   cached PASS could mask a change.

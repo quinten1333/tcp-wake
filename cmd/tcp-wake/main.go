@@ -36,8 +36,8 @@ func main() {
 	// forwarder. Until then a held request is released when the target becomes
 	// healthy or its client disconnects, and no response bytes are written
 	// (FR-2, FR-6).
-	pl := proxy.NewPipeline(ctx, cfg, health, prober, wake, logger)
-	listener := proxy.New(cfg, pl.Handle)
+	pl := proxy.NewPipeline(ctx, health, prober, wake, logger)
+	listener := proxy.NewListener(cfg, pl.Handle)
 
 	if err := listener.Serve(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)

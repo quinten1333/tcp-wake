@@ -143,9 +143,9 @@ func TestIF6OneLogLinePerExecution(t *testing.T) {
 	var buf bytes.Buffer
 	logger := NewLogger(&buf)
 
-	logger.Wake("/usr/local/bin/wol-send", WakeResult{Command: "/usr/local/bin/wol-send", ExitCode: 0})
-	logger.Wake("/usr/local/bin/wol-send", WakeResult{Command: "/usr/local/bin/wol-send", ExitCode: 3, Err: fmt.Errorf("exit 3")})
-	logger.Wake("/usr/local/bin/wol-send", WakeResult{Command: "/usr/local/bin/wol-send", ExitCode: -1, Err: fmt.Errorf("not found")})
+	logger.Wake("/usr/local/bin/wol-send", WakeResult{ExitCode: 0})
+	logger.Wake("/usr/local/bin/wol-send", WakeResult{ExitCode: 3, Err: fmt.Errorf("exit 3")})
+	logger.Wake("/usr/local/bin/wol-send", WakeResult{ExitCode: -1, Err: fmt.Errorf("not found")})
 
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 	if len(lines) != 3 {
@@ -169,7 +169,7 @@ func TestFR12NoExecWhileIdle(t *testing.T) {
 	cfg := testConfig()
 	cfg.WakeCommand = cmd
 	prober := stubProber(health, time.Hour, func(context.Context) bool { return false })
-	pl := NewPipeline(context.Background(), cfg, health, prober, NewWakeTrigger(cfg), NewLogger(io.Discard))
+	pl := NewPipeline(context.Background(), health, prober, NewWakeTrigger(cfg), NewLogger(io.Discard))
 	defer prober.Close()
 
 	// The pipeline exists and the probe stub is live, but no request is
@@ -190,7 +190,7 @@ func TestFR3FiveRequestsProduceFiveExecutions(t *testing.T) {
 	cfg.WakeCommand = cmd
 	prober := stubProber(health, time.Hour, func(context.Context) bool { return false })
 	logBuf := &syncBuffer{}
-	pl := NewPipeline(context.Background(), cfg, health, prober, NewWakeTrigger(cfg), NewLogger(logBuf))
+	pl := NewPipeline(context.Background(), health, prober, NewWakeTrigger(cfg), NewLogger(logBuf))
 	defer prober.Close()
 
 	const n = 5
@@ -229,7 +229,7 @@ func TestFR17ClientGets500NamingWakeCommand(t *testing.T) {
 	prober := stubProber(health, time.Hour, func(context.Context) bool { return false })
 	defer prober.Close()
 	logBuf := &syncBuffer{}
-	pl := NewPipeline(context.Background(), cfg, health, prober, NewWakeTrigger(cfg), NewLogger(logBuf))
+	pl := NewPipeline(context.Background(), health, prober, NewWakeTrigger(cfg), NewLogger(logBuf))
 
 	_, addr := startListener(t, cfg, pl.Handle)
 
