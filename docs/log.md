@@ -271,3 +271,39 @@ Next steps:
 - T5 — Wake trigger: exec `wake_command` once per triggering request, report its exit status
 - T6 — Wait-bound timer measured from arrival and never restarted
 - T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
+
+## [4] Health state and Probe — a two-state belief written only by a probe
+
+Implemented T4: the health belief about hypha and the probe that is its only writer. `Health` starts not healthy and changes only through an unexported `observe(ready)`, so no block (the forwarder included) can infer the state from a failure's cause (ADR-0008). `Prober` polls `health_path` on `target_address` at `probe_interval` with `probe_timeout` only while a request is pending (FR-12), exits on the first ready observation so a healthy target is never probed on a timer, and `ProbeNow` provides the single-probe FR-19 seam for the forwarder. Ready is HTTP 200 with body {"status":"ok"}; any other status, body, timeout, or transport error is not healthy (FR-10, FR-11, IF-3). `cmd/tcp-wake` now wires the belief into the still-hold-only handler, which releases on the first ready observation and writes nothing until T5/T6/T7 land.
+
+Steps taken:
+- Added `internal/proxy/health.go` with `Health` and the pending-gated `Prober` cadence loop.
+- Added `internal/proxy/probe.go` with the context-bounded, keep-alive-disabled HTTP probe.
+- Wired `cmd/tcp-wake/main.go` to `RequestStarted`/`RequestDone` and `health.WaitHealthyOr(ctx, p.Discarded())`.
+- Wrote 11 tests named for FR-10/FR-11/FR-12/FR-19/IF-3 and the ADR-0008 rule.
+- Ran two mutation checks (loop not exiting on ready; loop not stopping at pending 0) that each turned the expected test red.
+- Smoke-tested: zero probes idle, probes to `/health` while held, zero client bytes, release once ready.
+- Ticked T4, appended the log entry, and recorded the learnings in AGENTS.md.
+
+Decisions:
+- [Kept `observe` unexported so ADR-0008's "observation is the only writer" is structural, not conventional.
+- [Started the loop only on the 0->1 pending edge and only while not healthy; stopped it at pending 0 and on first ready (FR-12, ADR-0008).
+- [Probed immediately at loop start, then every interval; ADR-0007's worst case is unaffected and a just-became-ready target is detected sooner.
+- [Used a close-and-replace broadcast channel in `WaitHealthyOr` to avoid missed wakeups.
+- [Disabled HTTP keep-alives and capped the health body read at 256 B.
+- [Compared the ready body with `strings.TrimSpace` to tolerate only surrounding whitespace per IF-3.
+
+Changes:
+- internal/proxy/health.go: new `Health` (belief, `WaitHealthyOr`) and `Prober` (pending-gated loop, `ProbeNow`, `Close`)
+- internal/proxy/probe.go: new `httpProbe`
+- internal/proxy/health_test.go: 11 tests for FR-10/FR-11/FR-12/FR-19/IF-3 and the ADR-0008 rule
+- cmd/tcp-wake/main.go: hold-only handler now waits on the health belief
+- docs/implementation-plan.md: ticked T4
+- docs/log.md: appended the T4 entry
+- AGENTS.md: recorded the T4 learnings and the probe-path smoke test
+
+Next steps:
+- T5 — Wake trigger: exec `wake_command` once per triggering request, report its exit status
+- T6 — Wait-bound timer measured from arrival and never restarted
+- T7 — Forwarder: verbatim upstream write, streamed relay, parallel release
+
