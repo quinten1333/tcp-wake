@@ -826,3 +826,40 @@ Changes:
 
 Next steps:
 - T14 — container image and compose file
+
+## [14] Container and compose — the unprivileged proxy with a setuid wake command
+
+T14 lands the deployment ADR-0003 describes. `Dockerfile` is a two-stage build:
+`golang:1.27` compiles a static `tcp-wake` binary, and `debian:stable-slim` runs
+it as the non-root `tcpwake` user (uid 10001). `compose.yaml` uses host
+networking, mounts the config at `/etc/tcp-wake/config.toml` and the wake
+command at its configured path, and has `restart: on-failure`. Critically it
+does NOT set `no-new-privileges`, which would disable the setuid boundary
+NFR-7 requires, and adds no capabilities — the proxy is unprivileged, and the
+setuid-root wake command is the only privileged part. `.dockerignore` keeps the
+build context to the Go sources.
+
+Steps taken:
+- Added `Dockerfile`, `compose.yaml`, `.dockerignore`.
+- Built `tcp-wake:test` and ran it with a setuid-root stub and a minimal config.
+- Verified inside the running container: `mode=4755 owner=root:root`, proxy
+  `uid=10001(tcpwake)`, and executing the stub gave
+  `real_uid=10001 effective_uid=0`.
+
+Decisions:
+- [Static binary and a slim glibc runtime so the container carries no toolchain
+  and the host's setuid command is the only privileged artefact.
+- [Do not drop all capabilities: dropping them would starve a setuid-root
+  wake command (e.g. a WoL sender needs networking capabilities), while the
+  proxy is already a non-root user, so NFR-8 holds without it.
+- [Do not set no-new-privileges: it would make the setuid bit inert and break
+  NFR-7; the compose comment records why.
+
+Changes:
+- Dockerfile, compose.yaml, .dockerignore: new deployment files
+- docs/implementation-plan.md: ticked T14
+- docs/log.md: appended this entry
+
+Next steps:
+- T15 — turn the check into a repeatable script
+

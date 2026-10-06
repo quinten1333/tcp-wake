@@ -1,0 +1,27 @@
+# tcp-wake container deployment (ADR-0003).
+#
+# Host networking keeps the listen address and hypha's address on the host's
+# own network stack, so the routing entry (ADR-0002) and the wake target need
+# no port mapping. The proxy user is the image's non-root user (NFR-8).
+#
+# The two mounts that must be supplied on hyperion:
+#   * the configuration file (ADR-0011, ADR-0015)
+#   * the setuid-root wake command (ADR-0005)
+#
+# The wake-command mount MUST NOT be nosuid, or the bit is inert while the mode
+# still reads 4755 (T1, R-1). `scripts/check-deploy.sh` verifies the bit from
+# inside the running container; `restart: on-failure` covers a crash.
+services:
+  tcp-wake:
+    build: .
+    image: tcp-wake:latest
+    container_name: tcp-wake
+    network_mode: host
+    restart: on-failure
+    user: "10001:10001"
+    # No cap_add: the proxy runs unprivileged, and Docker's default capability
+    # set is left for the setuid-root wake command only. Do NOT set
+    # no-new-privileges: it would disable the setuid boundary NFR-7 requires.
+    volumes:
+      - ${TCPWAKE_CONFIG_PATH:-/etc/tcp-wake/config.toml}:/etc/tcp-wake/config.toml:ro
+      - ${TCPWAKE_WAKE_COMMAND_PATH:-/usr/local/bin/wol-send}:/usr/local/bin/wol-send:ro

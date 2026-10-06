@@ -1,0 +1,10 @@
+.git
+.gitignore
+.stroma
+docs
+scripts
+*.md
+stub
+stub.c
+Dockerfile
+compose.yaml
