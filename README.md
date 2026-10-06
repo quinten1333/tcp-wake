@@ -1,68 +1,167 @@
 # tcp-wake
 
-A reverse-proxy service on hyperion that holds requests to hypha while it is off, wakes it, and forwards verbatim once healthy.
+A reverse-proxy service on **hyperion** that holds requests to **hypha** while it
+is powered off, runs a wake command, polls hypha's health endpoint, and forwards
+each held request verbatim once hypha is ready. A client never sees an error
+caused by hypha being off (except the one accepted case in [Accepted
+risks](#accepted-risks-do-not-fix-these)).
 
-## Deployment Checklist
+- Requirement baseline: `docs/specs/SRS.md`
+- Architecture and all 15 ADRs: `docs/architecture.md`, `docs/adr/`
+- Requirement-to-test mapping: `docs/specs/RTM.md`
 
-### T1 — Verify the setuid bit survives the container
+## How it works
 
-**Requirement:** R-1 (ADR-0003, ADR-0005, NFR-7)
-
-The wake command is a root-owned, setuid (`4755`) file. ADR-0003 deploys the
-proxy in a container, which risks the runtime or storage driver stripping the
-bit. This check proves the bit survives *and remains effective* inside a
-container running as a non-root user.
-
-> **Why the check must run from the repository directory.** `/tmp` is mounted
-> `nosuid` on this host, and a bind mount inherits the source filesystem's
-> mount options. A stub built under `/tmp` therefore loses its setuid effect
-> even though `stat` still prints `4755`. Always build the stub on a
-> non-`nosuid` filesystem (the repo checkout is on the btrfs root subvolume).
-> The definitive test is **executing** the binary and reading its effective uid;
-> `stat` alone cannot prove the bit is not inert.
-
-Repeatable verification (run as the `arch` user, which is in the `docker` group):
-
-```bash
-cd "$(git rev-parse --show-toplevel)"
-
-# 1. Build the stub on a non-nosuid filesystem.
-cat > stub.c <<'EOF'
-#include <stdio.h>
-#include <unistd.h>
-int main(void) {
-    printf("real_uid=%d effective_uid=%d\n", (int)getuid(), (int)geteuid());
-    return 0;
-}
-EOF
-gcc -o stub stub.c
-sudo chown root:root stub && sudo chmod 4755 stub
-stat -c '%a %U:%G' stub        # -> 4755 root:root
-
-# 2. Run it from inside a container as a non-root user.
-sudo docker run --rm --user 1000:1000 \
-  -v "$(pwd)/stub:/mnt/stub:ro" debian:stable-slim \
-  sh -c "stat -c 'mode=%a owner=%U:%G' /mnt/stub; id; /mnt/stub; grep '/mnt/stub' /proc/mounts"
-
-# Expected:
-#   mode=4755 owner=root:root
-#   uid=1000 gid=1000 groups=1000
-#   real_uid=1000 effective_uid=0        <- the setuid bit is effective
-#   /dev/vda3 /mnt/stub btrfs ro,...     <- no 'nosuid' in the options
-
-# 3. Clean up.
-rm -f stub.c stub
+```
+client ──▶ existing routing ──▶ tcp-wake ──▶ hypha
+              (TLS, auth)         │  hold, wake, probe, forward
+                                  └── exec setuid-root wake command
 ```
 
-**Verification results (2026-09-23):**
+The system is a single unprivileged Go process in a container with host
+networking. While hypha is not healthy a request is held open with **no deadline
+and no response bytes**; each held request triggers one wake-command execution.
+A goroutine probes `GET /health` while a request waits. On the first ready
+answer every held request opens its own upstream connection and is forwarded
+byte-for-byte, streaming the response back. See `docs/architecture.md` §6 for
+the runtime views.
 
-| Check | Result |
+## Build and deploy
+
+Prerequisites on hyperion: Docker with the Compose plugin, a wake command that
+is root-owned mode `4755`, and a reachable hypha address.
+
+```bash
+git clone <repo> && cd tcp-wake
+docker compose build
+docker compose up -d
+```
+
+`compose.yaml` (ADR-0003) runs the container with host networking and mounts:
+
+| Mount | Purpose |
 |---|---|
-| `stat` shows mode `4755 root:root` inside the container | ✅ PASS |
-| Container process runs as non-root (`uid=1000 gid=1000`) | ✅ PASS |
-| Executing the stub gives `real_uid=1000 effective_uid=0` (bit is effective) | ✅ PASS |
-| Bind mount options contain no `nosuid` | ✅ PASS |
+| `/etc/tcp-wake/config.toml` | configuration (default discovery path, ADR-0015) |
+| `/usr/local/bin/wol-send` | the setuid-root wake command (ADR-0005) |
 
-The setuid bit **survives and remains effective** through the Docker bind mount.
-ADR-0003 and ADR-0005 are confirmed valid; NFR-7's privilege boundary holds in
-the container. T2 may proceed.
+Override the two host paths with `TCPWAKE_CONFIG_PATH` and
+`TCPWAKE_WAKE_COMMAND_PATH`:
+
+```bash
+TCPWAKE_CONFIG_PATH=/srv/tcp-wake/config.toml \
+TCPWAKE_WAKE_COMMAND_PATH=/usr/local/sbin/wake-hypha \
+  docker compose up -d
+```
+
+`docker compose build` produces a static binary run as the non-root user
+`tcpwake` (uid 10001). No capabilities are added, and `no-new-privileges` is
+deliberately **not** set because it would disable the setuid wake command
+(NFR-7). Nothing is persisted; a restart discards all held state (FR-16).
+
+## The routing entry to add
+
+Add exactly **one** route for hypha and change nothing else (ADR-0002, FR-9).
+The route's upstream is `listen_address` from the config, over plain HTTP. TLS
+termination and client authentication stay at the routing layer (ADR-0006,
+§2 non-goal 6).
+
+With an nginx-style layer:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;   # = listen_address
+    proxy_http_version 1.1;
+    proxy_buffering off;                # preserve streamed responses (FR-15)
+}
+```
+
+Keep this route and `listen_address` in step (R-10). `listen_address` **must not**
+be reachable from outside hyperion, or prompts travel in the clear (R-7).
+
+## Configuration
+
+TOML file, discovered by `--config`, then `$TCPWAKE_CONFIG`, then the fixed
+default `/etc/tcp-wake/config.toml` (ADR-0015). Every key has an environment
+override `TCPWAKE_<KEY>` that wins over the file (ADR-0011). `docs/config.example.toml`
+is the annotated example.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `listen_address` | `127.0.0.1:8080` | address the routing layer forwards to |
+| `target_address` | `http://hypha.lan:8080` | hypha, target of the probe and every forward |
+| `health_path` | `/health` | path probed; ready is `200 {"status":"ok"}` (IF-3) |
+| `probe_interval` | `2s` | probe cadence while a request is pending (ADR-0007) |
+| `probe_timeout` | `1s` | per-probe timeout |
+| `wait_bound` | `120s` | max hold, measured from arrival and never restarted (FR-8) |
+| `wake_command` | `/usr/local/bin/wol-send` | setuid-root command, exec'd once per triggering request (FR-3) |
+| `held_body_cap` | `64MiB` | max request body retained; over it the client gets 413 (FR-20) |
+
+Durations are Go duration strings (`120s`, `500ms`); sizes accept an IEC suffix
+(`64MiB`, `1GiB`). A missing, unreadable, or malformed file prevents start with
+a message naming the offending key. An environment override set to empty is an
+error, not a silent fallback.
+
+## Verify a deployment
+
+```bash
+# 1. The setuid boundary inside the running container (NFR-7, NFR-8, R-1).
+scripts/check-deploy.sh
+
+# 2. The requirement suite.
+go test ./... && go test -race ./...
+
+# 3. The spec/architecture traceability check.
+python3 scripts/check_traceability.py docs/specs/SRS.md docs/architecture.md
+```
+
+### Inspection checklist — NFR-4 (no deadline on a held connection)
+
+- [ ] `TestNFR4NoDeadlineCallsInSource` passes: no `SetDeadline`,
+      `SetReadDeadline`, or `SetWriteDeadline` in the non-test proxy sources.
+- [ ] `TestNFR4ListenerSetsNoDeadline` passes: a deadline spy sees no deadline.
+- [ ] Manual: with hypha off, open a connection to `listen_address`, send a
+      request, and confirm it receives zero bytes until hypha reports healthy.
+      Do **not** add a connection timeout to "fix" a stuck request (non-goal 7).
+
+### Inspection checklist — NFR-7 (the wake command gets its privilege)
+
+- [ ] `scripts/check-deploy.sh` passes: inside the container the command is
+      `4755 root:root` and executing it yields `effective_uid=0`.
+- [ ] The host file is root-owned and mode `4755` and lives on a non-`nosuid`
+      filesystem. A bind mount inherits the source's mount options; `/tmp` is
+      usually `nosuid`, so never build or store the command there.
+- [ ] `stat -c '%a %U:%G' /usr/local/bin/wol-send` on the host prints
+      `4755 root:root`.
+
+### Inspection checklist — NFR-8 (nothing else is privileged)
+
+- [ ] `docker exec tcp-wake id` shows a non-root uid (the image uses 10001).
+- [ ] `compose.yaml` adds no capability, sets no `privileged: true`, and does
+      not set `no-new-privileges`.
+- [ ] `TestNFR8NoPrivilegeEscalationInSource` passes: the code never calls
+      `Setuid`/`Setgid`/`Setgroups` or asks for a capability.
+
+## Accepted risks (do not fix these)
+
+These are decisions, not defects. A change that "fixes" one of them violates a
+requirement or an ADR. The full risk table is `docs/architecture.md` §11.
+
+| Accepted behaviour | Why it must stay |
+|---|---|
+| A held request has **no connection timeout** | NFR-4 and §2 non-goal 7; timeouts belong to hypha and the routing layer |
+| A client that stalls mid-body can be held indefinitely (R-4) | Detecting it needs a timeout, which NFR-4 forbids |
+| The held set is **uncapped** (ADR-0012) | NFR-5 requires at least 8; growth is bounded by the client population, and the body cap bounds each request |
+| The first request after an out-of-band shutdown gets a **502** (R-8) | ADR-0008 trusts the cached health state instead of probing every forward |
+| The system holds **nothing across a restart** (FR-16) | §2 non-goal 5; restart closes held connections rather than replaying them |
+| Request/response bodies are **never logged** (ADR-0010) | §2 non-goal 3; logging them would write prompts and tokens to disk |
+| hypha's idle-shutdown can race a wake (R-3) | The two hosts do not communicate; accepted, not mitigated |
+| TLS and client authentication are **not** here | ADR-0006 and §2 non-goal 6; the routing layer is the trust boundary |
+
+## Configuration notes you must not "optimise" away
+
+- `wait_bound` is measured from the request's arrival and is **not restarted** by
+  a wake attempt (FR-8).
+- The probe runs **only** while a request is pending and on the first ready
+  answer it stops; it never probes on a timer while idle (FR-12, ADR-0008).
+- The wake command is exec'd **directly as one path**: no shell, no argument
+  splitting (ADR-0005; a setuid script does not work).

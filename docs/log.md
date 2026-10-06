@@ -896,3 +896,34 @@ Changes:
 
 Next steps:
 - T16 — README install, routing, config reference, inspection checklists
+
+## [16] README — deploy, verify, and the things not to change
+
+T16 rewrites the README as the operator-facing document so someone who has not
+seen this project can deploy and verify it. It keeps the T1 setuid lesson but
+folds it into the NFR-7 checklist, and adds: the one-route integration rule
+(ADR-0002, FR-9), the annotated configuration table and its discovery/env
+overrides, the build-and-deploy steps with the two required mounts, the three
+inspection checklists (NFR-4, NFR-7, NFR-8), and an "Accepted risks (do not fix
+these)" table that names each deliberate non-behaviour and the requirement or
+ADR that forbids changing it.
+
+Steps taken:
+- Rewrote `README.md`: how it works, build/deploy, the routing entry, the config
+  reference, verification commands, the NFR-4/7/8 checklists, and accepted risks.
+- Kept `scripts/check-deploy.sh`, `go test`, and the traceability check as the
+  three verification commands.
+
+Decisions:
+- [State the accepted risks and the configuration invariants explicitly, because
+  the most likely future change is someone "fixing" a deliberate non-behaviour.
+- [Keep the operator's route to one hypha entry and say so, since stray routes
+  are R-10.
+
+Changes:
+- README.md: operator guide
+- docs/implementation-plan.md: ticked T16
+- docs/log.md: appended this entry
+
+Next steps:
+- Whole-project SOLID review and cleanup

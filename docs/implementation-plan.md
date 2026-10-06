@@ -80,7 +80,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   T1's verification turned into a command the operator runs after any redeploy, so R-1 cannot regress silently.
   Verify: the script exits non-zero when the bit is stripped. `scripts/check-deploy.sh`; `chmod 4755` must follow `chown` because `chown` clears the setuid bit.
 
-- [ ] **T16 — README.**
+- [x] **T16 — README.**
   Install, the routing entry to add (one entry for hypha, nothing else touched), the config key reference, the two inspection checklists (NFR-4, NFR-7, NFR-8), and the accepted risks the operator must not try to fix.
   Verify: a reader who has not seen this conversation can deploy and verify it.
 
