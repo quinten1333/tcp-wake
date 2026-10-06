@@ -64,11 +64,12 @@ func heldBodyCapDetail(limit config.ByteSize) errorDetail {
 // and for the body cap it is ByteSize's IEC form ("64MiB"). Architecture §5.1
 // illustrates the former as "120s"; the value names the configured bound, which
 // is what ADR-0014 requires, and the original TOML spelling is not retained.
-func writeError(conn net.Conn, status int, detail errorDetail) error {
-	body, err := json.Marshal(errorEnvelope{Error: detail})
-	if err != nil {
-		return err
-	}
+//
+// There is no error return: marshalling a struct of strings cannot fail, and a
+// failed write means the client has already left, which every caller treats the
+// same way.
+func writeError(conn net.Conn, status int, detail errorDetail) {
+	body, _ := json.Marshal(errorEnvelope{Error: detail})
 	head := fmt.Sprintf(
 		"HTTP/1.1 %d %s\r\n"+
 			"Content-Type: application/json\r\n"+
@@ -77,9 +78,6 @@ func writeError(conn net.Conn, status int, detail errorDetail) error {
 			"\r\n",
 		status, http.StatusText(status), len(body),
 	)
-	if _, err := io.WriteString(conn, head); err != nil {
-		return err
-	}
-	_, err = conn.Write(body)
-	return err
+	io.WriteString(conn, head)
+	conn.Write(body)
 }

@@ -48,7 +48,6 @@ type fakeTarget struct {
 	forwardResp  string
 	forward      func(c net.Conn, req string)
 	got          []string
-	probeCount   int
 	forwardCount int
 }
 
@@ -117,13 +116,6 @@ func (ft *fakeTarget) requests() []string {
 	return append([]string(nil), ft.got...)
 }
 
-// probes reports how many times the health path was hit.
-func (ft *fakeTarget) probes() int {
-	ft.mu.Lock()
-	defer ft.mu.Unlock()
-	return ft.probeCount
-}
-
 // forwardConns reports how many upstream connections carried a forwarded
 // request. A probe connection is not counted.
 func (ft *fakeTarget) forwardConns() int {
@@ -153,7 +145,6 @@ func (ft *fakeTarget) serve(c net.Conn) {
 	if requestPath(req) == ft.healthPath {
 		ft.mu.Lock()
 		ready := ft.ready
-		ft.probeCount++
 		ft.mu.Unlock()
 		if ready {
 			io.WriteString(c, targetReadyResponse)
@@ -376,9 +367,6 @@ func (s *system) wakeExecutions() int {
 // wakeLogLines counts the wake lines in the captured log, the counting
 // artefact for FR-3, FR-9, and FR-12.
 func (s *system) wakeLogLines() int { return wakeLineCount(s.log.String()) }
-
-// errorLogLines counts the error lines in the captured log.
-func (s *system) errorLogLines() int { return errorLineCount(s.log.String()) }
 
 // readAll closes the client connection and returns everything the system wrote
 // on it. It is safe to call once per held connection after the response or

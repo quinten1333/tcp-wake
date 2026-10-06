@@ -242,6 +242,16 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   The target starts not ready; a test flips it with `setReady`, so the state
   change still comes from a real probe (ADR-0008) and cannot race the loop.
 
+- **SOLID review (post-T16).** File layout after the review: `health.go`
+  (`Health` belief) and `prober.go` (`Prober` cadence); `intake.go` (Intake +
+  the two error vars + `maxHeadBytes` + `rejectTooLarge`) and `framing.go`
+  (shared `readHead`/`framing`/`walkChunks`/trailers used by both Intake and the
+  response relay); `internal/config/config.go` (loader) and
+  `internal/config/bytesize.go` (`ByteSize`, `ParseByteSize`, `String`). `writeError` returns
+  nothing (marshalling strings cannot fail; a write failure is the client
+  leaving). `Health.WaitHealthy` was removed — use `WaitHealthyOr(ctx, nil)`.
+  Test-side source scanners share `scanNonTestSources` in `helpers_test.go`.
+
 - **Naming and exposure (post-T5 review).** The Listener constructor is
   `NewListener`, not `New`, because the package has several constructors and
   `New` was ambiguous. The held set is unexported (`heldSet`/`newHeldSet`,

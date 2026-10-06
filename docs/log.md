@@ -927,3 +927,58 @@ Changes:
 
 Next steps:
 - Whole-project SOLID review and cleanup
+
+## [17] Whole-project SOLID review — split responsibilities, drop dead surface
+
+Reviewed every production file against SOLID after T16. The package boundaries
+are sound: the proxy is one cohesive package, `Pipeline` is the single
+orchestrator, and `writeError` is the single response seam. The findings were
+within files and in the test scaffolding.
+
+Executed:
+- **SRP — `health.go` held two responsibilities.** The health *belief*
+  (`Health`) and the probe *cadence runner* (`Prober`) now live in `health.go`
+  and `prober.go`.
+- **SRP/cohesion — `intake.go` held shared framing.** The head reader, the
+  framing detector, and the chunk walker are used by both Intake and the
+  Forwarder's response relay, so they moved to `framing.go`; `intake.go` keeps
+  Intake and its 413 rejection.
+- **SRP — `config.go` held a value type plus the loader.** `ByteSize`,
+  `ParseByteSize`, and `String` moved to `bytesize.go`; `config.go` is the
+  loader.
+- **Dead surface — `writeError` returned an error no caller read.** Its only
+  error was a `json.Marshal` failure on a struct of strings, which cannot
+  happen. It now returns nothing; a failed write is the client having left,
+  which every caller already treats the same way.
+- **Dead surface — `Health.WaitHealthy`** was a wrapper only one test used;
+  removed, and the test uses `WaitHealthyOr(ctx, nil)`.
+- **DRY — `Listener.Serve`** duplicated its close-all-and-wait cleanup on both
+  exit paths; one deferred cleanup now covers both.
+- **DRY (tests) — four source-scan guards** each re-implemented the non-test
+  `.go` directory walk; they share `scanNonTestSources` in `helpers_test.go`.
+- Removed the unused `fakeTarget.probes` method, `system.errorLogLines`, and the
+  now-unread `probeCount` field. Corrected the package doc that still said the
+  Logger writes one line per execution only.
+
+Consciously not changed:
+- **`Pipeline`'s concrete collaborators.** Introducing interfaces for
+  `Health`/`Prober`/`WakeTrigger`/`Forwarder`/`Logger` would be speculative
+  indirection in a single cohesive package; the real inversions that matter for
+  testing (`Prober.probeFn`, `Listener.listen`) already exist, and the
+  package-internal tests substitute at those seams.
+- **`rawTarget` vs `fakeTarget`.** The former is a minimal primitive for
+  byte-level forwarding tests; the latter the full integration harness. Merging
+  them would couple low-level tests to the whole system.
+- **The `keyFields` table in config.** An explicit table beats reflection over
+  struct tags for eight keys, and a test pins it to the example file.
+
+Verification: `gofmt -l .` clean, `go vet ./...` clean, `go test -count=1 -race
+./...` green, traceability check exits 0.
+
+Changes:
+- internal/proxy/health.go, prober.go, framing.go, intake.go, errors.go,
+  listener.go, request.go: responsibility splits and dead-surface removal
+- internal/config/config.go, bytesize.go: value type split
+- internal/proxy/*_test.go: shared scan helper, dead helper removal
+- AGENTS.md: recorded the post-review file layout
+- docs/log.md: this entry

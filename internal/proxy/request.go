@@ -3,8 +3,9 @@
 // exact wire bytes the client sent), the held set (the in-memory set of
 // requests currently held), the Health belief and its Prober (the target's
 // readiness, written only by a probe), the WakeTrigger (one command execution
-// per request received while not healthy), the Logger (one line per execution),
-// and the Pipeline that orders them along the request path.
+// per request received while not healthy), the Logger (one line per wake
+// execution and one per error), and the Pipeline that orders them along the
+// request path.
 //
 // Bytes are never parsed into a request object: the header/body boundary and
 // the two framing fields (Content-Length, Transfer-Encoding) are inspected so

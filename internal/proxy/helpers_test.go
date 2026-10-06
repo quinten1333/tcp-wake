@@ -6,6 +6,8 @@ import (
 	"context"
 	"io"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -118,6 +120,33 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+// scanNonTestSources calls check for every non-test .go file in the package, so
+// the several structural guards share one directory walk and one "checked at
+// least one file" assertion.
+func scanNonTestSources(t *testing.T, check func(name string, data []byte)) {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checked++
+		check(name, data)
+	}
+	if checked == 0 {
+		t.Fatal("source inspection checked no files")
+	}
 }
 
 // get sends a minimal complete request and leaves the connection open.

@@ -76,14 +76,19 @@ func (l *Listener) Serve(ctx context.Context) error {
 	}()
 
 	var wg sync.WaitGroup
+	// One cleanup path for both exit reasons: abandon everything still held and
+	// wait for its goroutines before returning.
+	defer func() {
+		l.held.closeAll()
+		wg.Wait()
+	}()
+
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-				break
+				return nil
 			}
-			l.held.closeAll()
-			wg.Wait()
 			return fmt.Errorf("proxy: accept: %w", err)
 		}
 		wg.Add(1)
@@ -92,10 +97,6 @@ func (l *Listener) Serve(ctx context.Context) error {
 			l.serveConn(c)
 		}(conn)
 	}
-
-	l.held.closeAll()
-	wg.Wait()
-	return nil
 }
 
 // serveConn retains one request and hands it to the handler. The close watcher

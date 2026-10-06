@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -376,26 +375,12 @@ func TestNFR6ExactlyOneResponsePerAcceptedRequest(t *testing.T) {
 // the only place a response of the system's own is written, so the "exactly one
 // response" property cannot be bypassed by a second write site later.
 func TestNFR6OnlyErrorsDotGoWritesAResponse(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	checked := 0
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "errors.go" {
-			continue
+	scanNonTestSources(t, func(name string, data []byte) {
+		if name == "errors.go" {
+			return
 		}
-		data, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		checked++
 		if bytes.Contains(data, []byte(`"HTTP/1.1 `)) {
 			t.Errorf("%s writes an HTTP status line outside errors.go, breaking the single-seam NFR-6 property", name)
 		}
-	}
-	if checked == 0 {
-		t.Fatal("source inspection checked no files")
-	}
+	})
 }

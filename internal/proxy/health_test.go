@@ -224,7 +224,7 @@ func TestProbeStopsWhenPendingDrops(t *testing.T) {
 }
 
 // TestProbeLoopReleasesWaiterOnReady covers the release path: the cadence loop
-// observes ready and wakes a goroutine blocked in WaitHealthy.
+// observes ready and wakes a goroutine blocked in WaitHealthyOr.
 func TestProbeLoopReleasesWaiterOnReady(t *testing.T) {
 	var calls atomic.Int64
 	h := NewHealth()
@@ -236,7 +236,7 @@ func TestProbeLoopReleasesWaiterOnReady(t *testing.T) {
 	pr.RequestStarted()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if !h.WaitHealthy(ctx) {
+	if !h.WaitHealthyOr(ctx, nil) {
 		t.Fatal("waiter was not released by the ready observation")
 	}
 	pr.RequestDone()

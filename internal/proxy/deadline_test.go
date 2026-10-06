@@ -5,8 +5,6 @@ import (
 	"context"
 	"io"
 	"net"
-	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -116,29 +114,12 @@ func TestNFR4ListenerSetsNoDeadline(t *testing.T) {
 // excluded because the spy above names the methods to prove they are absent
 // from the implementation.
 func TestNFR4NoDeadlineCallsInSource(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
 	banned := []string{"SetReadDeadline", "SetWriteDeadline", "SetDeadline"}
-	checked := 0
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		data, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		checked++
+	scanNonTestSources(t, func(name string, data []byte) {
 		for _, b := range banned {
 			if bytes.Contains(data, []byte(b)) {
 				t.Errorf("%s sets a %s, which NFR-4 forbids", name, b)
 			}
 		}
-	}
-	if checked == 0 {
-		t.Fatal("source inspection checked no files")
-	}
+	})
 }

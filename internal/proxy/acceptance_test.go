@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -237,29 +236,12 @@ func TestNFR3StreamedChunkLatencyUnder50ms(t *testing.T) {
 // non-root user with no added capabilities) is a documented checklist in the
 // README, checked by scripts/check-deploy.sh.
 func TestNFR8NoPrivilegeEscalationInSource(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
 	banned := []string{"Setuid", "Setgid", "Setgroups", "syscall.Credential", "CAP_"}
-	checked := 0
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		data, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		checked++
+	scanNonTestSources(t, func(name string, data []byte) {
 		for _, b := range banned {
 			if bytes.Contains(data, []byte(b)) {
 				t.Errorf("%s contains %s: the proxy must run without elevated privileges (NFR-8)", name, b)
 			}
 		}
-	}
-	if checked == 0 {
-		t.Fatal("source inspection checked no files")
-	}
+	})
 }
