@@ -57,7 +57,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
 
 ## Phase 2 — Acceptance suite
 
-- [ ] **T11 — Integration harness.**
+- [x] **T11 — Integration harness.**
   A fake target that can be started, stopped, and made to answer 503; a stub wake command that records invocations and can be made to fail; a fake client that can hold and disconnect.
   Verify: the harness runs green against a stub implementation and fails when a behaviour is removed.
 

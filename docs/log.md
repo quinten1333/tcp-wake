@@ -676,3 +676,46 @@ Next steps:
 ### [9] follow-up — a pre-existing race in the held-request tests
 
 The full `-race` suite was flaky before this task (about 2 runs in 20 on the T7 test `TestFR4AndFR5AllHeldRequestsForwardInParallel`). Diagnosis: those tests hold requests while the target is not healthy, then call `health.observe(true)` by hand while a `notReadyProber` stub keeps probing false; the stub's next probe can undo the manual observation, so the waiters never release and the client read times out. Fixed by adding `bootingProber`, which reports not-ready until the test calls its `boot` function and then observes ready, so the cadence loop and the test cannot race. `TestFR4AndFR5` and `TestNFR5EightConcurrentAllGetResponse` now use it; 30 consecutive `-race` runs of both are clean. This is a test-only change; no production code moved.
+
+## [11] Integration harness — the whole request path wired around a fake target
+
+Landing the harness before T10 because the restart check needs a system it can
+start and tear down mid-hold. `internal/proxy/harness_test.go` wires the real
+Listener, Intake, Health, Prober, Pipeline, WakeTrigger, Forwarder, and Logger
+around a controllable `fakeTarget`, the recording wake command, and a fake
+client. The target is a raw TCP server that reads each request with the
+production `Intake`, so the bytes it records are the bytes the system forwarded;
+it answers the health path from a readiness flag and every other path from a
+configured response, and a forward handler override gives the streaming tests
+control of the byte cadence. `system` adds `hold`, `send`, `sendRaw`, `waitHeld`,
+`restart`, and log/record counters.
+
+Steps taken:
+- Added `fakeTarget` (start, `setReady`, `setForwardResponse`,
+  `setForwardHandler`, `stop`, `requests`, `probes`, `forwardConns`).
+- Added `system`, which starts the real pipeline on an ephemeral port, holds and
+  sends fake clients, counts the two log line forms and the wake record, and
+  restarts by cancelling its context and building a fresh instance.
+- Added `TestHarnessSelfCheck`: one held request wakes once and holds, then the
+  ready target forwards it and relays the response, so a harness bug surfaces
+  before a requirement test does.
+- Fixed a harness bug in `requestPath`: the original cut returned the whole
+  request target (`/health HTTP/1.1`), so probes were misrecorded as forwards
+  and the target never looked ready. Splitting on whitespace first fixes it.
+
+Decisions:
+- [Keep the harness test-only in `package proxy` so it can reuse the
+  package-private framing and log helpers without exporting a test seam.
+- [Use the real Prober against the fake target rather than a stub, so an
+  acceptance test exercises the probe-to-release path end to end.
+- [Drive readiness with `setReady` instead of calling `health.observe(true)`, so
+  the state change still comes from a probe (ADR-0008) and cannot race the loop.
+
+Changes:
+- internal/proxy/harness_test.go: new integration harness and self-check
+- docs/implementation-plan.md: ticked T11
+- docs/log.md: appended this entry
+
+Next steps:
+- T10 — restart semantics on top of the harness
+- T12 — the per-requirement acceptance suite

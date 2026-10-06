@@ -231,6 +231,17 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
 - **T9 / log-line count assertions.** A failing wake now writes **two** lines
   (wake + error 500); tests must count by form (`wake command=`,
   `" error status="`), not by total `\n`, or they will break on the error line.
+- **T11 / integration harness.** `internal/proxy/harness_test.go` wires the
+  real path around a controllable `fakeTarget`, the recording wake command, and
+  a fake client. `system` (newSystem/startSystem/restart/send/sendRaw/hold/
+  waitHeld) is the shared scaffold for T10 and T12; prefer extending it over
+  adding one-off helpers. The fake target reads each request with production
+  `Intake`, so a recorded request is byte-for-byte the forwarded one. Its
+  `requestPath` parses with `strings.Fields` on the request line — cutting once
+  on a space leaves the HTTP version attached and misclassifies every probe.
+  The target starts not ready; a test flips it with `setReady`, so the state
+  change still comes from a real probe (ADR-0008) and cannot race the loop.
+
 - **Naming and exposure (post-T5 review).** The Listener constructor is
   `NewListener`, not `New`, because the package has several constructors and
   `New` was ambiguous. The held set is unexported (`heldSet`/`newHeldSet`,
