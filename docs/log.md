@@ -863,3 +863,36 @@ Changes:
 Next steps:
 - T15 — turn the check into a repeatable script
 
+
+## [15] Deployment check script — the T1 proof, repeatable after any redeploy
+
+T15 turns T1's manual verification into `scripts/check-deploy.sh`, so a stripped
+setuid bit cannot regress silently while the host's file mode still reads 4755.
+The script builds the image, creates a setuid-root stub on a non-nosuid
+filesystem, runs the container as the unprivileged user with the stub and a
+minimal config mounted, and checks three things inside the running container:
+the wake command is `4755 root:root`, the proxy uid is not 0, and executing the
+stub yields `effective_uid=0`. Any failure exits non-zero with a message naming
+the cause and R-1. Options: `--image`, `--no-build`, `--wake-command PATH`
+(used by the negative test), and `TCPWAKE_CHECK_WORKDIR`.
+
+Steps taken:
+- Added `scripts/check-deploy.sh` (executable), with a cleanup trap.
+- Fixed the classic trap: `chown` clears the setuid bit, so `chown` must run
+  before `chmod`, and both need root once the file is root-owned.
+- Positive run: PASS (mode 4755 root:root, proxy uid 10001, effective_uid 0).
+- Negative run with a root-owned mode-755 stub: exit code 1, refusing to pass.
+
+Decisions:
+- [Make the execution check the definitive one; the mode/owner check alone
+  cannot prove the bit is effective (T1's lesson).
+- [Refuse to run on a `nosuid` source filesystem rather than reporting a false
+  negative that looks like a runtime fault.
+
+Changes:
+- scripts/check-deploy.sh: new deployment verification
+- docs/implementation-plan.md: ticked T15
+- docs/log.md: appended this entry
+
+Next steps:
+- T16 — README install, routing, config reference, inspection checklists

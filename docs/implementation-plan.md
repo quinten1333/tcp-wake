@@ -76,7 +76,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   Image with host networking; config mounted at `/etc/tcp-wake/config.toml`; the wake command bind-mounted from the host; no elevated capabilities for the proxy process; restart on failure.
   Verify: `docker exec` shows the setuid bit intact (T1's check, now repeatable) and a non-root uid.
 
-- [ ] **T15 — Deployment check as a script.**
+- [x] **T15 — Deployment check as a script.**
   T1's verification turned into a command the operator runs after any redeploy, so R-1 cannot regress silently.
   Verify: the script exits non-zero when the bit is stripped. `scripts/check-deploy.sh`; `chmod 4755` must follow `chown` because `chown` clears the setuid bit.
 
