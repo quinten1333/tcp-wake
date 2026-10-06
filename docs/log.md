@@ -794,3 +794,35 @@ Changes:
 
 Next steps:
 - T13 — `docs/specs/RTM.md` mapping every ID to its test and status
+
+## [13] RTM — every requirement mapped to its executable check
+
+T13 adds `docs/specs/RTM.md`, one row per SRS requirement with
+`req_id, requirement, source, priority, verify_method, test_id, status`. The
+plan names `specs/RTM.md`; in this repository the spec lives at
+`docs/specs/SRS.md`, so the RTM follows it to `docs/specs/RTM.md`. The SRS has
+no separate priority field, so the goal label (G1–G4) is carried in the
+`priority` column and explained in the header. `verify_method` is `test`, or
+`inspection + test` for NFR-4/7/8 whose SRS checks are inspections; their
+executable halves are the source scans and their inspection halves the README
+checklists and `scripts/check-deploy.sh` (T15).
+
+Steps taken:
+- Generated the 34 rows from the SRS tables so the statements cannot drift, then
+  filled the `test_id` mapping by hand.
+- Verified all 42 referenced test names exist in the tree, all 34 IDs appear
+  exactly once, and `scripts/check_traceability.py` still exits 0.
+
+Decisions:
+- [One row per requirement, not per test: where a requirement has several
+  checks (FR-11, FR-12, NFR-4, NFR-6) the test_id cell lists them all.
+- [Carry the SRS goal label as priority rather than inventing a priority scale
+  the spec does not define.
+
+Changes:
+- docs/specs/RTM.md: new traceability matrix
+- docs/implementation-plan.md: ticked T13 and noted the path
+- docs/log.md: appended this entry
+
+Next steps:
+- T14 — container image and compose file

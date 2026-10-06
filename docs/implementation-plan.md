@@ -65,9 +65,10 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   One test per requirement, named for its ID, carrying the check from `specs/SRS.md`. The countable ones (FR-3, FR-9, FR-12) read the log lines; the inspection ones (NFR-4, NFR-7, NFR-8) are documented checklists in the README.
   Verify: `go test ./...` green; a deliberately broken behaviour turns exactly the expected test red.
 
-- [ ] **T13 — `specs/RTM.md`.**
+- [x] **T13 — `specs/RTM.md`.**
   One row per requirement: `req_id, requirement, source, priority, verify_method, test_id, status`, with status moving from Draft to verified as tests land.
   Verify: every requirement ID in `specs/SRS.md` appears exactly once.
+  Landed at `docs/specs/RTM.md` (the plan's `specs/` is `docs/specs/` in this repository).
 
 ## Phase 3 — Deployment
 
