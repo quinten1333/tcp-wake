@@ -51,7 +51,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   Text lines to stdout, one per wake execution and one per error; no request or response content ever written.
   Verify: `go test ./...` — line counts match; inspection confirms no body content appears.
 
-- [ ] **T10 — Restart semantics (FR-16, §2 non-goal 5).**
+- [x] **T10 — Restart semantics (FR-16, §2 non-goal 5).**
   All state in-memory; a fresh process starts not healthy with no held set; nothing is persisted.
   Verify: `go test ./...` — restart mid-hold forwards nothing for the held requests.
 

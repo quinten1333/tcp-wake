@@ -719,3 +719,37 @@ Changes:
 Next steps:
 - T10 — restart semantics on top of the harness
 - T12 — the per-requirement acceptance suite
+
+## [10] Restart semantics — a fresh process holds nothing and forwards nothing
+
+T10 closes the loop on FR-16 and architecture §6.8. The restart guarantee was
+already structural (Health starts not healthy, the held set lives in the
+Listener, nothing is persisted), so this task is the executable proof on top of
+the T11 harness rather than new production code. The test holds three requests
+on one system instance, restarts it (cancel the process context, build a fresh
+instance over the same config and target), and asserts the target's recorded
+requests stay empty — hypha's access log is the check. It also asserts the fresh
+process starts not healthy with a held count of 0, and that the same fresh
+process still forwards a new request once the target is ready, so the empty log
+is a restart property and not a dead system.
+
+Steps taken:
+- Added `restart_test.go` with `TestFR16RestartMidHoldForwardsNothing` and the
+  structural `TestFR16StateIsInMemory`.
+- Restart cancels the harness context; `Serve` closes the held connections and
+  the fresh instance shares no state with the old one.
+- Verified with `-race`.
+
+Decisions:
+- [Use the real restart seam (context cancel + fresh wiring) rather than calling
+  internal teardown methods, so the test exercises `Serve`'s closeAll path.
+- [Assert both halves — nothing forwarded AND a fresh request still works — so
+  the test cannot pass for the wrong reason.
+
+Changes:
+- internal/proxy/restart_test.go: FR-16 restart test
+- docs/implementation-plan.md: ticked T10
+- docs/log.md: appended this entry
+
+Next steps:
+- T12 — one executable acceptance test per requirement, named for its ID
