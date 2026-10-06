@@ -753,3 +753,44 @@ Changes:
 
 Next steps:
 - T12 — one executable acceptance test per requirement, named for its ID
+
+## [12] Acceptance suite — one executable check per requirement ID
+
+T12 fills the gaps in the per-requirement coverage and pins the suite to the SRS
+checks. Existing tests already carried most IDs; this iteration adds the ones
+that did not and names them so the RTM can point one ID at one test. The
+countable requirements read the log lines (FR-3, FR-9, FR-12); the timing
+requirements use scaled durations because the reference network is not available
+in the test environment, with the production default asserted separately; the
+inspection requirements get an executable source scan where one exists and a
+README checklist where the check is a deployment fact.
+
+Steps taken:
+- Added `internal/proxy/acceptance_test.go`: `TestFR2HoldsUntilHealthyAndSendsNoBytes`,
+  `TestFR9NoWakeForTrafficNotBoundForHypha`, `TestFR13ForwardedRequestBytesUnchanged`,
+  `TestFR14ResponseRelayedUnchanged`, `TestNFR1FirstResponseWithinBound`,
+  `TestNFR2HealthyFirstResponseUnder2s`, `TestNFR3StreamedChunkLatencyUnder50ms`,
+  and `TestNFR8NoPrivilegeEscalationInSource`.
+- Added `TestIF5EveryKeyComesFromTheFile` and `TestNFR1DefaultWaitBoundCoversBoot`
+  to the config tests.
+- Mutation check: removing the FR-17 500 write made exactly
+  `TestFR17ClientGets500NamingWakeCommand` and the 500 subcase of
+  `TestADR0014ErrorBodySchema` fail; restored.
+- Ran the full suite under `-race`.
+
+Decisions:
+- [Scale the timing checks rather than sleeping 120 s; the SRS check's shape is
+  preserved and the 120 s default is asserted by the config test.
+- [Treat FR-9 as a routing-boundary check (ADR-0002): traffic to another vhost
+  never reaches the listener, so the system's wake log stays empty.
+- [Keep the existing tests and add only the missing IDs, mapping many IDs to
+  already-passing tests in the RTM rather than duplicating them.
+
+Changes:
+- internal/proxy/acceptance_test.go: the missing per-requirement checks
+- internal/config/config_test.go: IF-5 and NFR-1 default-bound checks
+- docs/implementation-plan.md: ticked T12
+- docs/log.md: appended this entry
+
+Next steps:
+- T13 — `docs/specs/RTM.md` mapping every ID to its test and status

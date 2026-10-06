@@ -396,3 +396,49 @@ func TestRawConfigTagsMatchExampleFile(t *testing.T) {
 		}
 	}
 }
+
+// TestIF5EveryKeyComesFromTheFile is the acceptance test for IF-5: the full key
+// set is read from the configuration file. It is deliberately separate from the
+// per-key table so the RTM can point one check at one test.
+func TestIF5EveryKeyComesFromTheFile(t *testing.T) {
+	cfg := mustLoad(t, `
+listen_address = "10.0.0.1:1234"
+target_address = "http://t.lan:4321"
+health_path    = "/readyz"
+probe_interval = "3s"
+probe_timeout  = "2s"
+wait_bound     = "9s"
+wake_command   = "/bin/wake"
+held_body_cap  = "1KiB"
+`, nil)
+
+	if cfg.ListenAddress != "10.0.0.1:1234" ||
+		cfg.TargetAddress != "http://t.lan:4321" ||
+		cfg.HealthPath != "/readyz" ||
+		cfg.ProbeInterval != 3*time.Second ||
+		cfg.ProbeTimeout != 2*time.Second ||
+		cfg.WaitBound != 9*time.Second ||
+		cfg.WakeCommand != "/bin/wake" ||
+		cfg.HeldBodyCap != ByteSize(1024) {
+		t.Fatalf("the file's keys were not all applied: %+v", cfg)
+	}
+}
+
+// TestNFR1DefaultWaitBoundCoversBoot ties NFR-1 to the configured default: the
+// default 120 s bound must exceed hypha's ~20 s boot (C-2) and the worst-case
+// probe detection (interval + timeout), leaving margin. The runtime shape of
+// NFR-1 is exercised by TestNFR1FirstResponseWithinBound.
+func TestNFR1DefaultWaitBoundCoversBoot(t *testing.T) {
+	cfg := mustLoad(t, "# defaults\n", nil)
+
+	const bootTime = 20 * time.Second
+	if cfg.WaitBound != 120*time.Second {
+		t.Fatalf("default WaitBound = %v, want 120s", cfg.WaitBound)
+	}
+	if detection := cfg.ProbeInterval + cfg.ProbeTimeout; detection >= cfg.WaitBound {
+		t.Fatalf("probe detection %v must be well inside the %v bound", detection, cfg.WaitBound)
+	}
+	if cfg.WaitBound <= bootTime {
+		t.Fatalf("wait bound %v does not cover the %v boot", cfg.WaitBound, bootTime)
+	}
+}

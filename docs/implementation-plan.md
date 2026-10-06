@@ -61,7 +61,7 @@ T2 through T10 follow the dependency order of the building blocks in `architectu
   A fake target that can be started, stopped, and made to answer 503; a stub wake command that records invocations and can be made to fail; a fake client that can hold and disconnect.
   Verify: the harness runs green against a stub implementation and fails when a behaviour is removed.
 
-- [ ] **T12 — The 34 requirement checks as executable tests.**
+- [x] **T12 — The 34 requirement checks as executable tests.**
   One test per requirement, named for its ID, carrying the check from `specs/SRS.md`. The countable ones (FR-3, FR-9, FR-12) read the log lines; the inspection ones (NFR-4, NFR-7, NFR-8) are documented checklists in the README.
   Verify: `go test ./...` green; a deliberately broken behaviour turns exactly the expected test red.
 
