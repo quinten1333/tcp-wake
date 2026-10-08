@@ -48,9 +48,10 @@ wait_bound = "120s"
 # that request's client a 500 immediately (FR-17).
 wake_mac = "AA:BB:CC:DD:EE:FF"
 
-# Interface etherwake sends the magic packet on (ADR-0016). Optional; the
-# default is eth0. Set it when the host uses predictable interface names.
-wake_interface = "eth0"
+# Interface etherwake sends the magic packet on (ADR-0016). Optional. Leave it
+# empty to omit -i and let etherwake choose its own default; set it when the
+# host uses predictable interface names.
+wake_interface = ""
 
 # Maximum request body retained, above which the client receives 413 (FR-20).
 # Bodies are held in memory, so this is also the per-request memory ceiling

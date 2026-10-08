@@ -44,13 +44,16 @@ type WakeTrigger struct {
 	args    []string
 }
 
-// NewWakeTrigger returns a trigger that runs etherwake on cfg's interface and
-// MAC.
+// NewWakeTrigger returns a trigger that runs etherwake on cfg's MAC. The
+// interface is passed with -i only when configured; an empty interface omits it
+// so etherwake's own default applies (ADR-0016).
 func NewWakeTrigger(cfg *config.Config) *WakeTrigger {
-	return &WakeTrigger{
-		command: etherwakePath,
-		args:    []string{"-i", cfg.WakeInterface, cfg.WakeMAC},
+	args := make([]string, 0, 3)
+	if cfg.WakeInterface != "" {
+		args = append(args, "-i", cfg.WakeInterface)
 	}
+	args = append(args, cfg.WakeMAC)
+	return &WakeTrigger{command: etherwakePath, args: args}
 }
 
 // Command returns the invocation as one string, which the request path reports

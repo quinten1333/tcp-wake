@@ -36,7 +36,8 @@ type Config struct {
 	WaitBound     time.Duration
 	// WakeMAC is the target's MAC address, required (ADR-0016).
 	WakeMAC string
-	// WakeInterface is the interface etherwake sends on, default eth0 (ADR-0016).
+	// WakeInterface is the interface etherwake sends on. Empty means omit -i
+	// and let etherwake choose its own default (ADR-0016).
 	WakeInterface string
 	HeldBodyCap   ByteSize
 }
@@ -67,7 +68,7 @@ func defaultRaw() rawConfig {
 		ProbeTimeout:  "1s",
 		WaitBound:     "120s",
 		WakeMAC:       "", // required; no default
-		WakeInterface: "eth0",
+		WakeInterface: "", // empty: omit -i and use etherwake's default
 		HeldBodyCap:   "64MiB",
 	}
 }
@@ -166,6 +167,11 @@ func applyEnv(raw *rawConfig, lookupEnv func(string) (string, bool)) {
 // offending key in every error.
 func parse(raw *rawConfig) (*Config, error) {
 	for _, f := range keyFields(raw) {
+		// wake_interface is optional: empty means omit -i and let etherwake
+		// choose its own default (ADR-0016).
+		if f.key == "wake_interface" {
+			continue
+		}
 		if strings.TrimSpace(*f.dst) == "" {
 			return nil, fmt.Errorf("config: %s: must not be empty", f.key)
 		}

@@ -11,5 +11,5 @@ probe_interval = "2s"                       # probed only while a request is pen
 probe_timeout  = "1s"
 wait_bound     = "120s"                     # measured from arrival, never restarted
 wake_mac       = "AA:BB:CC:DD:EE:FF"        # required; the target's MAC for the magic packet
-wake_interface = "eth0"                     # optional; interface etherwake sends on
+wake_interface = ""                          # optional; empty omits -i and uses etherwake's default
 held_body_cap  = "64MiB"                    # over it the client gets 413

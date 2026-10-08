@@ -1045,3 +1045,14 @@ though FR-16/§6.8 say a restarted process leaves held clients with no response.
 `Pipeline.Handle` now returns silently when the wake failed *and* the process
 context is done. `TestFR16ShutdownDuringWakeWritesNoResponse` pins it, and the
 restart test is stable under repeated `-race` runs.
+
+## [24] wake_interface is optional — unset omits -i
+
+Follow-up to ADR-0016: when `wake_interface` is not supplied, the trigger now
+passes only the MAC and omits `-i` entirely, so etherwake applies its own
+default interface instead of being forced onto a hard-coded `eth0`. `Config`'s
+`WakeInterface` default is the empty string, `parse` treats the key as optional,
+and `NewWakeTrigger` builds `["-i", iface, mac]` only when the interface is set.
+`TestNFR7TriggerExecsEtherwake` covers both the set and unset cases. The SRS
+change log and §5.5, ADR-0016, architecture §8.2, README, both examples, and
+AGENTS.md were updated to say "unset omits -i" rather than "default eth0".

@@ -123,25 +123,44 @@ func TestWakeExecIsNotShellSplit(t *testing.T) {
 }
 
 // TestNFR7TriggerExecsEtherwake covers the trigger's half of NFR-7: it invokes
-// the fixed etherwake binary with the configured interface and MAC as argv. The
-// capability check itself is the deployment inspection owned by T15 and
-// scripts/check-deploy.sh.
+// the fixed etherwake binary with the MAC as argv, adding -i only when an
+// interface is configured. The capability check itself is the deployment
+// inspection owned by scripts/check-deploy.sh.
 func TestNFR7TriggerExecsEtherwake(t *testing.T) {
-	cfg := testConfig()
-	cfg.WakeMAC = "00:11:22:33:44:55"
-	cfg.WakeInterface = "enp1s0"
-	tr := NewWakeTrigger(cfg)
+	const mac = "00:11:22:33:44:55"
 
-	if tr.command != etherwakePath {
-		t.Fatalf("command = %q, want the fixed %q", tr.command, etherwakePath)
-	}
-	want := []string{"-i", "enp1s0", "00:11:22:33:44:55"}
-	if !reflect.DeepEqual(tr.args, want) {
-		t.Fatalf("args = %v, want %v", tr.args, want)
-	}
-	if got := tr.Command(); got != etherwakePath+" -i enp1s0 00:11:22:33:44:55" {
-		t.Fatalf("Command() = %q", got)
-	}
+	t.Run("interface set", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.WakeMAC = mac
+		cfg.WakeInterface = "enp1s0"
+		tr := NewWakeTrigger(cfg)
+
+		if tr.command != etherwakePath {
+			t.Fatalf("command = %q, want the fixed %q", tr.command, etherwakePath)
+		}
+		want := []string{"-i", "enp1s0", mac}
+		if !reflect.DeepEqual(tr.args, want) {
+			t.Fatalf("args = %v, want %v", tr.args, want)
+		}
+		if got := tr.Command(); got != etherwakePath+" -i enp1s0 "+mac {
+			t.Fatalf("Command() = %q", got)
+		}
+	})
+
+	t.Run("interface omitted", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.WakeMAC = mac
+		tr := NewWakeTrigger(cfg)
+
+		// No -i: etherwake applies its own default.
+		want := []string{mac}
+		if !reflect.DeepEqual(tr.args, want) {
+			t.Fatalf("args = %v, want %v (no -i so etherwake uses its default)", tr.args, want)
+		}
+		if got := tr.Command(); got != etherwakePath+" "+mac {
+			t.Fatalf("Command() = %q", got)
+		}
+	})
 
 	// A stub can be substituted for the binary to prove an execution happens.
 	path, record := recordingCommand(t)

@@ -94,7 +94,7 @@ is the annotated example and `config.toml.example` the short one.
 | `probe_timeout` | `1s` | per-probe timeout |
 | `wait_bound` | `120s` | max hold, measured from arrival and never restarted (FR-8) |
 | `wake_mac` | — (required) | target's MAC address; `etherwake` runs once per triggering request (FR-3) |
-| `wake_interface` | `eth0` | interface `etherwake` sends the magic packet on (ADR-0016) |
+| `wake_interface` | — (optional) | interface `etherwake` sends on; unset omits `-i` and uses etherwake's default (ADR-0016) |
 | `held_body_cap` | `64MiB` | max request body retained; over it the client gets 413 (FR-20) |
 
 Durations are Go duration strings (`120s`, `500ms`); sizes accept an IEC suffix

@@ -63,7 +63,7 @@ command itself is no longer configuration. Two keys replace `wake_command`:
 | Key | Required | Default | Meaning |
 |---|---|---|---|
 | `wake_mac` | yes | — | the target's MAC address for the magic packet |
-| `wake_interface` | no | `eth0` | the interface `etherwake` sends on |
+| `wake_interface` | no | unset | the interface `etherwake` sends on; unset omits `-i` and lets etherwake choose its own default |
 
 This changes IF-5's key set and §5.4's wake interface, so those SRS sections are
 updated with this decision (see Forms of change below).
@@ -157,7 +157,7 @@ This ADR changes the SRS baseline, so the change control note in `SRS.md`
 applies. The affected items are:
 
 - **IF-5** — the configuration key set: `wake_command` is replaced by `wake_mac`
-  (required) and `wake_interface` (default `eth0`).
+  (required) and `wake_interface` (optional; unset omits `-i` and uses etherwake's own default).
 - **§5.4 (wake interface)** — the command is fixed to `etherwake`; the MAC and
   interface are configuration.
 - **§5.5 (configuration interface)** — the key list.

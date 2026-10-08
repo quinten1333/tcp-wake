@@ -78,8 +78,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.WaitBound != 120*time.Second {
 		t.Errorf("WaitBound = %v", cfg.WaitBound)
 	}
-	if cfg.WakeInterface != "eth0" {
-		t.Errorf("WakeInterface = %q, want the eth0 default", cfg.WakeInterface)
+	if cfg.WakeInterface != "" {
+		t.Errorf("WakeInterface = %q, want empty (omit -i and use etherwake's default)", cfg.WakeInterface)
 	}
 	if cfg.WakeMAC != "AA:BB:CC:DD:EE:FF" {
 		t.Errorf("WakeMAC = %q", cfg.WakeMAC)

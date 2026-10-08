@@ -113,7 +113,7 @@ T2–T16; ADR-0016 later replaced the wake mechanism. See
   500. `TestWakeExecIsNotShellSplit` pins the no-shell rule by exec'ing a path
   that contains a space; `TestNFR7TriggerExecsEtherwake` pins the fixed argv.
 - **ADR-0016 / wake configuration and privilege.** `wake_mac` is required and
-  `wake_interface` defaults to `eth0`; there is no command key. The privilege is
+  `wake_interface` is optional (unset omits `-i`, so etherwake's own default applies); there is no command key. The privilege is
   the `cap_net_raw+ep` xattr on `/usr/sbin/etherwake`, verified by
   `scripts/check-deploy.sh` with `getcap` plus an execution as uid 10001 (with
   the cap: rc 0; without it: `must be run as root`, rc 2). `chown` clears setuid

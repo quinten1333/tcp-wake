@@ -7,8 +7,8 @@
 >
 > **Change log** — v0.2 (2026-10-08, ADR-0016): the wake mechanism is fixed to
 > `etherwake` with a `CAP_NET_RAW` file capability, so the configurable wake
-> command is replaced by `wake_mac` (required) and `wake_interface` (default
-> `eth0`). Affected: §1, §2 non-goal 4, Terms, FR-3, FR-17, NFR-7, IF-4, IF-5,
+> command is replaced by `wake_mac` (required) and `wake_interface` (optional;
+> unset omits `-i` and uses etherwake's own default). Affected: §1, §2 non-goal 4, Terms, FR-3, FR-17, NFR-7, IF-4, IF-5,
 > §5.4, §5.5. Impact: NFR-7's check becomes a file capability instead of a
 > setuid file mode; the system is no longer pluggable to a non-`etherwake` wake
 > command; R-1 changes shape but remains (see `docs/architecture.md` §11).
@@ -143,7 +143,7 @@
 ### 5.5 Configuration interface
 
 - **Ends**: the system ↔ its configuration file.
-- **Crosses**: the wait bound (default 120 s), hypha's MAC address, the wake interface (default `eth0`), hypha's address, the health endpoint path, the probe cadence, the probe timeout, the held body cap (default 64 MiB), and the listen address.
+- **Crosses**: the wait bound (default 120 s), hypha's MAC address, the wake interface (optional), hypha's address, the health endpoint path, the probe cadence, the probe timeout, the held body cap (default 64 MiB), and the listen address.
 - **Format**: one file with named keys (IF-5).
 - **Failure**: a missing or unreadable configuration file prevents the system from starting, and the failure is reported at start.
 
