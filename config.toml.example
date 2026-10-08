@@ -1,0 +1,14 @@
+# tcp-wake configuration — every key with its default.
+#
+# Located by --config, then $TCPWAKE_CONFIG, then /etc/tcp-wake/config.toml.
+# Any key can be overridden by TCPWAKE_<KEY>, which wins over this file.
+# Durations are Go strings ("120s", "500ms"); sizes take an IEC suffix ("64MiB").
+
+listen_address = "127.0.0.1:8080"
+target_address = "http://hypha.lan:8080"
+health_path    = "/health"                  # ready is HTTP 200 with body {"status":"ok"}
+probe_interval = "2s"                       # probed only while a request is pending
+probe_timeout  = "1s"
+wait_bound     = "120s"                     # measured from arrival, never restarted
+wake_command   = "/usr/local/bin/wol-send"  # setuid-root, exec'd directly (no shell), once per request while not healthy
+held_body_cap  = "64MiB"                    # over it the client gets 413

@@ -982,3 +982,17 @@ Changes:
 - internal/proxy/*_test.go: shared scan helper, dead helper removal
 - AGENTS.md: recorded the post-review file layout
 - docs/log.md: this entry
+
+## [18] Root config.toml.example — the key set in one small file
+
+Added `config.toml.example` at the repository root: all eight keys with their
+defaults and a short inline comment only where the name does not carry the
+behaviour (health readiness body, probe-only-while-pending, wait bound measured
+from arrival, the setuid/direct-exec wake command, and the 413 body cap).
+Extended `TestDefaultsMatchExampleFile` to pin both this file and
+`docs/config.example.toml` to `defaultRaw()`, so neither can drift from the code.
+
+Changes:
+- config.toml.example: new small example
+- internal/config/config_test.go: the defaults test now checks both examples
+- docs/log.md: this entry

@@ -77,25 +77,33 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 // TestDefaultsMatchExampleFile pins the code defaults to the values documented
-// in docs/config.example.toml, and fails if a key is added to one but not the
-// other (which also checks the toml tags match the file's key set).
+// in the example files, and fails if a key is added to one but not the other
+// (which also checks the toml tags match the files' key set). Both the
+// annotated docs example and the small root example must agree with the code.
 func TestDefaultsMatchExampleFile(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "config.example.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, path := range []string{
+		filepath.Join("..", "..", "docs", "config.example.toml"),
+		filepath.Join("..", "..", "config.toml.example"),
+	} {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	var fromFile rawConfig
-	md, err := toml.Decode(string(data), &fromFile)
-	if err != nil {
-		t.Fatalf("decode example file: %v", err)
-	}
-	if und := md.Undecoded(); len(und) > 0 {
-		t.Fatalf("example file has keys absent from rawConfig: %v", und)
-	}
+			var fromFile rawConfig
+			md, err := toml.Decode(string(data), &fromFile)
+			if err != nil {
+				t.Fatalf("decode example file: %v", err)
+			}
+			if und := md.Undecoded(); len(und) > 0 {
+				t.Fatalf("example file has keys absent from rawConfig: %v", und)
+			}
 
-	if want := defaultRaw(); fromFile != want {
-		t.Errorf("example file values = %+v\ncode defaults      = %+v", fromFile, want)
+			if want := defaultRaw(); fromFile != want {
+				t.Errorf("example file values = %+v\ncode defaults      = %+v", fromFile, want)
+			}
+		})
 	}
 }
 
