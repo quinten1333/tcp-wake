@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"io"
 	"testing"
 	"time"
@@ -63,6 +64,33 @@ func TestFR16RestartMidHoldForwardsNothing(t *testing.T) {
 	data := readAll(t, newConn)
 	if len(data) == 0 {
 		t.Fatal("the fresh system forwarded nothing after the target became ready")
+	}
+}
+
+// TestFR16ShutdownDuringWakeWritesNoResponse pins the interaction the restart
+// test can only catch by timing: a wake interrupted by the process context
+// (shutdown/restart) is not a wake failure, so the held client gets no response
+// rather than a 500 (FR-16, §6.8).
+func TestFR16ShutdownDuringWakeWritesNoResponse(t *testing.T) {
+	health := NewHealth()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// A wake that blocks until the context is cancelled and exec kills it.
+	wake := &WakeTrigger{command: stubCommand(t, "#!/bin/sh\nsleep 30\n")}
+	pl := NewPipeline(ctx, time.Hour, health,
+		notReadyProber(t, health), wake,
+		testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
+
+	p, client := newPipePending(t)
+	h := startHandle(pl, p, client)
+
+	time.Sleep(50 * time.Millisecond) // let the wake start
+	cancel()                          // restart/shutdown
+
+	h.wait(t)
+	if resp := h.response(t, p); len(resp) != 0 {
+		t.Fatalf("wrote %d bytes on shutdown during a wake, want none (FR-16): %q", len(resp), resp)
 	}
 }
 

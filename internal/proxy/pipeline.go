@@ -51,6 +51,11 @@ func (pl *Pipeline) Handle(p *Pending) {
 		res := pl.wake.Run(pl.ctx)
 		pl.logger.Wake(pl.wake.Command(), res)
 		if res.Err != nil {
+			// A wake interrupted by shutdown is not a wake failure: the process
+			// is going away, and FR-16/§6.8 say a held client gets no response.
+			if pl.ctx.Err() != nil {
+				return
+			}
 			pl.writeAndLog(p.Conn, http.StatusInternalServerError, errorDetail{
 				Message:   fmt.Sprintf("wake command %q failed: %v", pl.wake.Command(), res.Err),
 				Component: componentWakeCommand,
