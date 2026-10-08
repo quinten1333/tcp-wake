@@ -38,11 +38,11 @@ docker compose up -d
 ```
 
 `compose.yaml` (ADR-0003) runs the container with host networking and mounts the
-configuration file:
+configuration file next to it by default:
 
 | Mount | Purpose |
 |---|---|
-| `/etc/tcp-wake/config.toml` | configuration, including `wake_mac` (ADR-0015, ADR-0016) |
+| `./config.toml` → `/etc/tcp-wake/config.toml` | configuration, including `wake_mac` (ADR-0015, ADR-0016) |
 
 Override the host path with `TCPWAKE_CONFIG_PATH`:
 
