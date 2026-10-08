@@ -4,10 +4,13 @@ This file is your memory. Update this file as the project progresses. You can cr
 # Project architecture
 tcp-wake is a wake-on-demand reverse proxy in Go deployed as a container on
 hyperion in front of hypha (normally powered off). It holds hypha-bound requests
-with no deadline, execs a setuid-root wake command, polls hypha's `/health`, and
-forwards held requests verbatim once healthy. Source of truth: `docs/architecture.md`
-(arc42, 15 ADRs accepted) plus `docs/specs/SRS.md` and `docs/implementation-plan.md`.
-Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-plan.md`.
+with no deadline, execs `etherwake` (image-installed with a `CAP_NET_RAW` file
+capability), polls hypha's `/health`, and forwards held requests verbatim once
+healthy. Source of truth: `docs/architecture.md` (arc42, 16 ADRs: 15 accepted,
+ADR-0005 superseded by ADR-0016) plus `docs/specs/SRS.md` v0.2 and
+`docs/implementation-plan.md`. Build order: T1 (blocking prerequisite) then
+T2–T16; ADR-0016 later replaced the wake mechanism. See
+`docs/implementation-plan.md`.
 
 # Learnings
 - **T1 / setuid in containers.** The setuid effect depends on the mount options,
@@ -95,16 +98,28 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   `srv.Close()` (it waits for the abandoned request) until the 10-minute go-test
   timeout. Release the handler **before** closing the server, e.g.
   `defer func() { close(release); srv.Close() }()`.
-- **T5 / Wake trigger.** `internal/proxy/wake.go` holds `WakeTrigger`: it
-  execs `cfg.WakeCommand` **directly** as one path — no `sh -c`, no whitespace
-  splitting, no args — because ADR-0005 makes the elevated privilege a property
-  of the setuid-root file, and setuid scripts do not work. The command inherits
-  the process env but its stdout/stderr are set to `nil` (discarded) so only the
-  one ADR-0010 line describes the execution. `WakeResult{Command, ExitCode, Err}`
-  distinguishes a clean exit (0, nil err), a non-zero exit (`*exec.ExitError`
-  with its code), and a launch failure (`ExitCode == -1`, `status=launch-failed`);
-  both failure shapes feed the FR-17 500. `TestWakeExecIsNotShellSplit` pins the
-  no-shell rule by exec'ing a path that contains a space.
+- **T5 / Wake trigger (updated by ADR-0016).** `internal/proxy/wake.go` holds
+  `WakeTrigger`, which execs the **fixed** `/usr/sbin/etherwake` with an explicit
+  argv (`-i <wake_interface> <wake_mac>`) — no `sh -c` and no whitespace
+  splitting. ADR-0016 replaced the old configurable `wake_command`: the image
+  installs etherwake and sets `cap_net_raw+ep` on it, so the wake tool gets only
+  the raw-socket capability. `WakeTrigger.command`/`args` are fields so tests
+  substitute a stub; `Command()` renders `path + args` for the FR-17 body and
+  the log. The command inherits the process env but its stdout/stderr are `nil`
+  (discarded) so only the one ADR-0010 line describes the execution.
+  `WakeResult{ExitCode, Err}` distinguishes a clean exit (0, nil err), a
+  non-zero exit (`*exec.ExitError` with its code), and a launch failure
+  (`ExitCode == -1`, `status=launch-failed`); both failure shapes feed the FR-17
+  500. `TestWakeExecIsNotShellSplit` pins the no-shell rule by exec'ing a path
+  that contains a space; `TestNFR7TriggerExecsEtherwake` pins the fixed argv.
+- **ADR-0016 / wake configuration and privilege.** `wake_mac` is required and
+  `wake_interface` defaults to `eth0`; there is no command key. The privilege is
+  the `cap_net_raw+ep` xattr on `/usr/sbin/etherwake`, verified by
+  `scripts/check-deploy.sh` with `getcap` plus an execution as uid 10001 (with
+  the cap: rc 0; without it: `must be run as root`, rc 2). `chown` clears setuid
+  — irrelevant now, but the analogous trap is `no-new-privileges`, which makes a
+  file capability inert. Dockerfile builds need `--network=host` in this VM
+  because the Docker bridge/veth is unavailable.
 - **T5 / Logger boundary with T9.** `internal/proxy/log.go` has a deliberately
   narrow `Logger` with only `Wake(command, res)`; T9 adds the error line and the
   "no request/response content" inspection to the same type rather than
@@ -288,12 +303,12 @@ Build order: T1 (blocking prerequisite) then T2–T16. See `docs/implementation-
   stay empty (FR-12); hold one request via bash `/dev/tcp` and probes must begin
   arriving at `health_path` while the client still receives zero bytes. Flip the
   server to `200 {"status":"ok"}` and the held connection must release.
-- **Manual smoke test (wake path, T5).** Point `wake_command` at a local
-  `#!/bin/sh` stub that appends a line to a record file, set `target_address` at
-  a local server answering 503, and start the binary. Hold requests via bash
-  `/dev/tcp`; the record grows by one per request and stdout gets one `wake
-  command=… status=0` line each. Swap the stub for one that `exit 7`s and the
-  client must get an immediate `500` naming `wake_command` with one
-  `status=7` line. Do not `wait` on the proxy/target background jobs — they run
-  until killed; wait only on the client PIDs.
+- **Manual smoke test (wake path, ADR-0016).** The wake command is fixed to
+  etherwake, so the smoke test for the FR-17 failure path uses an invalid
+  `wake_interface` (etherwake exits non-zero) rather than swapping a command.
+  For the success path, point `target_address` at a local server answering 503
+  and set `wake_mac` to any MAC; hold requests via bash `/dev/tcp` and stdout
+  gets one `wake command="/usr/sbin/etherwake -i … …" status=0` line each. Do
+  not `wait` on the proxy/target background jobs — they run until killed; wait
+  only on the client PIDs.
 - **Don't commit build artifacts.** T1's `stub`/`stub.c` are gitignored.

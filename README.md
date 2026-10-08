@@ -1,13 +1,13 @@
 # tcp-wake
 
 A reverse-proxy service on **hyperion** that holds requests to **hypha** while it
-is powered off, runs a wake command, polls hypha's health endpoint, and forwards
+is powered off, runs `etherwake`, polls hypha's health endpoint, and forwards
 each held request verbatim once hypha is ready. A client never sees an error
 caused by hypha being off (except the one accepted case in [Accepted
 risks](#accepted-risks-do-not-fix-these)).
 
-- Requirement baseline: `docs/specs/SRS.md`
-- Architecture and all 15 ADRs: `docs/architecture.md`, `docs/adr/`
+- Requirement baseline: `docs/specs/SRS.md` v0.2
+- Architecture and all 16 ADRs: `docs/architecture.md`, `docs/adr/`
 - Requirement-to-test mapping: `docs/specs/RTM.md`
 
 ## How it works
@@ -15,12 +15,12 @@ risks](#accepted-risks-do-not-fix-these)).
 ```
 client ──▶ existing routing ──▶ tcp-wake ──▶ hypha
               (TLS, auth)         │  hold, wake, probe, forward
-                                  └── exec setuid-root wake command
+                                  └── exec etherwake (CAP_NET_RAW)
 ```
 
 The system is a single unprivileged Go process in a container with host
 networking. While hypha is not healthy a request is held open with **no deadline
-and no response bytes**; each held request triggers one wake-command execution.
+and no response bytes**; each held request triggers one `etherwake` execution.
 A goroutine probes `GET /health` while a request waits. On the first ready
 answer every held request opens its own upstream connection and is forwarded
 byte-for-byte, streaming the response back. See `docs/architecture.md` §6 for
@@ -28,8 +28,8 @@ the runtime views.
 
 ## Build and deploy
 
-Prerequisites on hyperion: Docker with the Compose plugin, a wake command that
-is root-owned mode `4755`, and a reachable hypha address.
+Prerequisites on hyperion: Docker with the Compose plugin, the target's MAC
+address, and a reachable hypha address.
 
 ```bash
 git clone <repo> && cd tcp-wake
@@ -37,26 +37,26 @@ docker compose build
 docker compose up -d
 ```
 
-`compose.yaml` (ADR-0003) runs the container with host networking and mounts:
+`compose.yaml` (ADR-0003) runs the container with host networking and mounts the
+configuration file:
 
 | Mount | Purpose |
 |---|---|
-| `/etc/tcp-wake/config.toml` | configuration (default discovery path, ADR-0015) |
-| `/usr/local/bin/wol-send` | the setuid-root wake command (ADR-0005) |
+| `/etc/tcp-wake/config.toml` | configuration, including `wake_mac` (ADR-0015, ADR-0016) |
 
-Override the two host paths with `TCPWAKE_CONFIG_PATH` and
-`TCPWAKE_WAKE_COMMAND_PATH`:
+Override the host path with `TCPWAKE_CONFIG_PATH`:
 
 ```bash
-TCPWAKE_CONFIG_PATH=/srv/tcp-wake/config.toml \
-TCPWAKE_WAKE_COMMAND_PATH=/usr/local/sbin/wake-hypha \
-  docker compose up -d
+TCPWAKE_CONFIG_PATH=/srv/tcp-wake/config.toml docker compose up -d
 ```
 
+The image installs `etherwake` and sets `cap_net_raw+ep` on it, so the wake tool
+receives only the raw-socket capability rather than full root (ADR-0016).
 `docker compose build` produces a static binary run as the non-root user
-`tcpwake` (uid 10001). No capabilities are added, and `no-new-privileges` is
-deliberately **not** set because it would disable the setuid wake command
-(NFR-7). Nothing is persisted; a restart discards all held state (FR-16).
+`tcpwake` (uid 10001). No capabilities are added to the container, and
+`no-new-privileges` is deliberately **not** set because it would make the file
+capability inert and break the wake path (NFR-7, R-1). Nothing is persisted; a
+restart discards all held state (FR-16).
 
 ## The routing entry to add
 
@@ -83,7 +83,7 @@ be reachable from outside hyperion, or prompts travel in the clear (R-7).
 TOML file, discovered by `--config`, then `$TCPWAKE_CONFIG`, then the fixed
 default `/etc/tcp-wake/config.toml` (ADR-0015). Every key has an environment
 override `TCPWAKE_<KEY>` that wins over the file (ADR-0011). `docs/config.example.toml`
-is the annotated example.
+is the annotated example and `config.toml.example` the short one.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -93,7 +93,8 @@ is the annotated example.
 | `probe_interval` | `2s` | probe cadence while a request is pending (ADR-0007) |
 | `probe_timeout` | `1s` | per-probe timeout |
 | `wait_bound` | `120s` | max hold, measured from arrival and never restarted (FR-8) |
-| `wake_command` | `/usr/local/bin/wol-send` | setuid-root command, exec'd once per triggering request (FR-3) |
+| `wake_mac` | — (required) | target's MAC address; `etherwake` runs once per triggering request (FR-3) |
+| `wake_interface` | `eth0` | interface `etherwake` sends the magic packet on (ADR-0016) |
 | `held_body_cap` | `64MiB` | max request body retained; over it the client gets 413 (FR-20) |
 
 Durations are Go duration strings (`120s`, `500ms`); sizes accept an IEC suffix
@@ -104,7 +105,7 @@ error, not a silent fallback.
 ## Verify a deployment
 
 ```bash
-# 1. The setuid boundary inside the running container (NFR-7, NFR-8, R-1).
+# 1. The wake privilege inside the running container (NFR-7, NFR-8, R-1).
 scripts/check-deploy.sh
 
 # 2. The requirement suite.
@@ -125,19 +126,19 @@ python3 scripts/check_traceability.py docs/specs/SRS.md docs/architecture.md
 
 ### Inspection checklist — NFR-7 (the wake command gets its privilege)
 
-- [ ] `scripts/check-deploy.sh` passes: inside the container the command is
-      `4755 root:root` and executing it yields `effective_uid=0`.
-- [ ] The host file is root-owned and mode `4755` and lives on a non-`nosuid`
-      filesystem. A bind mount inherits the source's mount options; `/tmp` is
-      usually `nosuid`, so never build or store the command there.
-- [ ] `stat -c '%a %U:%G' /usr/local/bin/wol-send` on the host prints
-      `4755 root:root`.
+- [ ] `scripts/check-deploy.sh` passes: inside the container `getcap` reports
+      `cap_net_raw=ep` on `/usr/sbin/etherwake` and executing it as the proxy
+      user exits 0.
+- [ ] `docker exec tcp-wake getcap /usr/sbin/etherwake` prints
+      `/usr/sbin/etherwake cap_net_raw=ep`.
+- [ ] The container is **not** run with `no-new-privileges`, which would make
+      the file capability inert.
 
 ### Inspection checklist — NFR-8 (nothing else is privileged)
 
 - [ ] `docker exec tcp-wake id` shows a non-root uid (the image uses 10001).
 - [ ] `compose.yaml` adds no capability, sets no `privileged: true`, and does
-      not set `no-new-privileges`.
+      not set `no-new-privileges` (which would disable the wake capability).
 - [ ] `TestNFR8NoPrivilegeEscalationInSource` passes: the code never calls
       `Setuid`/`Setgid`/`Setgroups` or asks for a capability.
 
@@ -155,6 +156,7 @@ requirement or an ADR. The full risk table is `docs/architecture.md` §11.
 | The system holds **nothing across a restart** (FR-16) | §2 non-goal 5; restart closes held connections rather than replaying them |
 | Request/response bodies are **never logged** (ADR-0010) | §2 non-goal 3; logging them would write prompts and tokens to disk |
 | hypha's idle-shutdown can race a wake (R-3) | The two hosts do not communicate; accepted, not mitigated |
+| The wake command is **fixed to `etherwake`** (ADR-0016) | A different mechanism needs a code change; that is the accepted cost of reducing wake configuration to a MAC address |
 | TLS and client authentication are **not** here | ADR-0006 and §2 non-goal 6; the routing layer is the trust boundary |
 
 ## Configuration notes you must not "optimise" away
@@ -163,5 +165,7 @@ requirement or an ADR. The full risk table is `docs/architecture.md` §11.
   a wake attempt (FR-8).
 - The probe runs **only** while a request is pending and on the first ready
   answer it stops; it never probes on a timer while idle (FR-12, ADR-0008).
-- The wake command is exec'd **directly as one path**: no shell, no argument
-  splitting (ADR-0005; a setuid script does not work).
+- `wake_mac` is required and has no default; the wake command is fixed to
+  `etherwake` (ADR-0016).
+- `etherwake` is exec'd **directly with an argv**: no shell and no argument
+  splitting, so a MAC address cannot be interpreted as shell input.

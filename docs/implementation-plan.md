@@ -2,6 +2,14 @@
 
 > Conforms to `specs/SRS.md` v0.2 and `architecture.md` (16 ADRs: 15 accepted, ADR-0005 superseded by ADR-0016).
 > Every task names the requirement IDs it satisfies and the command or observation that proves it.
+>
+> **Post-implementation change (2026-10-08, ADR-0016).** The wake mechanism was
+> changed from the setuid-root wake command to image-installed `etherwake` with a
+> `CAP_NET_RAW` file capability, configured by `wake_mac` (required) and
+> `wake_interface` (default `eth0`). The T1 and T5 text below, and the T14/T15
+> verify lines, describe the superseded design; the current deployment is
+> `Dockerfile` + `compose.yaml` + `scripts/check-deploy.sh`, and the current
+> wake trigger is `internal/proxy/wake.go`. See ADR-0016.
 
 ## Order and why
 

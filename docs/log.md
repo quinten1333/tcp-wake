@@ -996,3 +996,52 @@ Changes:
 - config.toml.example: new small example
 - internal/config/config_test.go: the defaults test now checks both examples
 - docs/log.md: this entry
+
+## [19-21] ADR-0016 — fixed etherwake with a CAP_NET_RAW file capability
+
+The user asked whether the container could install etherwake and grant the
+tcpwake user the right to wake hypha, rather than bind-mounting a setuid-root
+wake command. The answer was yes, but it reverses ADR-0005, so it was recorded
+as a decision first and then implemented.
+
+**Decision (ADR-0016, accepted).** The wake tool is fixed to `etherwake`,
+installed in the image with a `cap_net_raw+ep` file capability. It grants only
+`CAP_NET_RAW` instead of ADR-0005's full root, keeps the proxy at uid 10001,
+removes the host bind mount and its `nosuid` trap, and needs no `sudo`/`sudoers`.
+The cost is that the wake mechanism is no longer pluggable: a non-etherwake
+mechanism needs a code change. Configuration becomes `wake_mac` (required) and
+`wake_interface` (default `eth0`); `wake_command` is removed. This changes the
+SRS key set (IF-5), §5.4/§5.5, and NFR-7's check, so the SRS was bumped to v0.2
+with an explicit change log and an impact note. ADR-0005 is marked
+`superseded by ADR-0016`; the architecture prose, R-1, the coverage appendix,
+the ADR index, the RTM, README, and both config examples were updated.
+
+**Verification before deciding.** On `debian:stable-slim`, with
+`cap_net_raw=ep` `etherwake -i lo <mac>` exits 0 as uid 10001; without it,
+etherwake prints `must be run as root` and exits 2. `scripts/check-deploy.sh`
+uses exactly that differential: `getcap` must report `cap_net_raw=ep`, the
+proxy uid must not be 0, and etherwake must exit 0 as the proxy user. The
+positive run passes; a derived image with `setcap -r` fails the script
+non-zero.
+
+Code and deployment:
+- `internal/config`: `WakeCommand` replaced by `WakeMAC` (required) and
+  `WakeInterface` (default `eth0`); a file without `wake_mac` prevents start.
+- `internal/proxy/wake.go`: `WakeTrigger` holds `command`/`args` and
+  `NewWakeTrigger` builds the fixed etherwake argv; tests substitute a stub.
+- `Dockerfile`: installs etherwake and libcap2-bin and runs
+  `setcap cap_net_raw+ep /usr/sbin/etherwake`.
+- `compose.yaml`: one config mount; no wake-command mount; no cap_add; and
+  deliberately no no-new-privileges.
+- `scripts/check-deploy.sh`: rewritten for the file capability.
+
+Gotcha recorded: this VM has no `veth` module, so Docker bridge networking is
+unavailable; image builds need `--network=host`, and `check-deploy.sh` builds
+with it.
+
+A latent bug surfaced while making the suite race-clean: a wake interrupted by
+shutdown was treated as a wake failure and wrote a 500 to the held client, even
+though FR-16/§6.8 say a restarted process leaves held clients with no response.
+`Pipeline.Handle` now returns silently when the wake failed *and* the process
+context is done. `TestFR16ShutdownDuringWakeWritesNoResponse` pins it, and the
+restart test is stable under repeated `-race` runs.
