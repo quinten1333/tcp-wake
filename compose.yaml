@@ -20,7 +20,7 @@ services:
     # inert and break the wake path (ADR-0016, R-1). No cap_add is needed; the
     # capability lives on the image file, not on the container.
     volumes:
-      - ${TCPWAKE_CONFIG_PATH:-/etc/tcp-wake/config.toml}:/etc/tcp-wake/config.toml:ro
+      - ${TCPWAKE_CONFIG_PATH:-./config.toml}:/etc/tcp-wake/config.toml:ro
     # The mounted config must set wake_mac. To override per deployment, add an
     # environment block with TCPWAKE_WAKE_MAC and/or TCPWAKE_WAKE_INTERFACE;
     # the environment wins (ADR-0011). Do not set them to an empty string, which
