@@ -1,6 +1,6 @@
 # Implementation Plan — tcp-wake
 
-> Conforms to `specs/SRS.md` v0.2 and `architecture.md` (16 ADRs: 15 accepted, ADR-0005 superseded by ADR-0016).
+> Conforms to `specs/SRS.md` v0.3 and `architecture.md` (17 ADRs: 16 accepted, ADR-0005 superseded by ADR-0016).
 > Every task names the requirement IDs it satisfies and the command or observation that proves it.
 >
 > **Post-implementation change (2026-10-08, ADR-0016).** The wake mechanism was

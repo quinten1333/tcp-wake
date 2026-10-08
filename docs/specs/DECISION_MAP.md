@@ -1,7 +1,7 @@
 # Decision Map — tcp-wake
 
 > One row per design decision. Every NFR (SRS §4), every interface (SRS §5), and every constraint (SRS §2) yields at least one row. The architecture is not baseline while any row's ADR status is not `accepted`.
-> Conforms to: `SRS.md` baseline v0.2.
+> Conforms to: `SRS.md` baseline v0.3.
 
 | # | Source (SRS ID/section) | Decision area | Question to the user | Recommended option | ADR | Status |
 |---|---|---|---|---|---|---|

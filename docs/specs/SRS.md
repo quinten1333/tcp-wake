@@ -2,7 +2,7 @@
 
 > Subject in every requirement is **the system**: the wake-on-demand reverse proxy on hyperion.
 > Normative keyword: `shall` marks a requirement. `will` states a fact. `should` marks an uncommitted goal.
-> **Baseline v0.2** — reviewed and confirmed by the user.
+> **Baseline v0.3** — reviewed and confirmed by the user.
 > Change control: any change to this document after baseline requires an impact assessment and a re-run of the pitfalls checklist on the changed requirement and its trace links.
 >
 > **Change log** — v0.2 (2026-10-08, ADR-0016): the wake mechanism is fixed to
@@ -12,6 +12,12 @@
 > §5.4, §5.5. Impact: NFR-7's check becomes a file capability instead of a
 > setuid file mode; the system is no longer pluggable to a non-`etherwake` wake
 > command; R-1 changes shape but remains (see `docs/architecture.md` §11).
+>
+> **Change log** — v0.3 (2026-10-08, ADR-0017): the log interface (§5.6) now also
+> carries one line per target health-state transition. No requirement changes:
+> IF-6 still requires one line per wake execution, and FR-3/FR-9/FR-12 still
+> count wake executions. The new line is an addition to the interface, not a new
+> required behaviour.
 
 ## 1. Goal and Context
 
@@ -150,8 +156,8 @@
 ### 5.6 Log interface
 
 - **Ends**: the system ↔ its log output on hyperion.
-- **Crosses**: one line per wake-command execution, carrying a timestamp and the exit status (IF-6).
-- **Format**: one line per execution, greppable.
+- **Crosses**: one line per wake-command execution, carrying a timestamp and the exit status (IF-6); one line per error; and one line per target health-state transition.
+- **Format**: greppable text, one line per event: `wake command=… status=…`, `error status=… component=… message=…`, and `health state=healthy|unhealthy`.
 - **Failure**: this log is the counting artifact for FR-3, FR-9, and FR-12, so an unwritable log is a start-time failure.
 
 ## 6. Open Questions

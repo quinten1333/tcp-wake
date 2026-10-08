@@ -1,7 +1,7 @@
 # Architecture — tcp-wake
 
-> Conforms to: `specs/SRS.md` baseline v0.2 (traceability: `specs/DECISION_MAP.md`).
-> 16 ADRs (§9): 15 `accepted`, and ADR-0005 `superseded by ADR-0016`. Every design assertion below cites its ADR.
+> Conforms to: `specs/SRS.md` baseline v0.3 (traceability: `specs/DECISION_MAP.md`).
+> 17 ADRs (§9): 16 `accepted`, and ADR-0005 `superseded by ADR-0016`. Every design assertion below cites its ADR.
 > One thing the requirements force with no alternative, and which is therefore not an ADR: all state is in-memory and dies with the process, because §2 non-goal 5 puts holding requests across a restart out of scope.
 
 ## 1. Introduction and Goals
@@ -14,7 +14,7 @@
   3. **Reliability** — exactly one response per accepted request whose client stays connected (NFR-6).
   4. **Security** — only the wake command runs with elevated privileges (NFR-7, NFR-8).
   5. **Availability** — hypha stays off while nothing is pending (G4, via FR-12).
-- **Baseline**: SRS `specs/SRS.md` v0.2, reviewed and confirmed by the user. Change control: any change to an ADR or a section requires an impact assessment and a re-run of the traceability check on the affected requirements and ADRs.
+- **Baseline**: SRS `specs/SRS.md` v0.3, reviewed and confirmed by the user. Change control: any change to an ADR or a section requires an impact assessment and a re-run of the traceability check on the affected requirements and ADRs.
 
 ## 2. Constraints
 
@@ -233,7 +233,7 @@ Configuration reaches the container as a mounted file plus environment overrides
 
 ### 8.1 Logging
 
-One text line per wake-command execution and one per error, on standard output (ADR-0010). These lines are the counting artefact for FR-3, FR-9, and FR-12. No request or response content is logged (§2 non-goal 3), which is a deliberate trade: faults inside a body are not diagnosable from the system's own logs. Touches Wake trigger and Logger.
+Three greppable text line forms on standard output: one per wake-command execution (`wake command=… status=…`), one per error (`error status=… component=… message=…`), and one per target health-state transition (`health state=healthy|unhealthy`) (ADR-0010, ADR-0017). The wake lines are the counting artefact for FR-3, FR-9, and FR-12; the transition line is written once per belief change, so its count is the number of transitions, not of probes. No request or response content is logged (§2 non-goal 3), which is a deliberate trade: faults inside a body are not diagnosable from the system's own logs. Touches Wake trigger, Health/Prober, and Logger.
 
 ### 8.2 Configuration
 
@@ -289,6 +289,7 @@ Client authentication is not this system's job; the routing layer is the trust b
 | ADR-0014 | Error response body schema | accepted | FR-8, FR-17, FR-18, FR-20, NFR-6 | 2026-09-26 |
 | ADR-0015 | Configuration file discovery and the `--config` flag | accepted | IF-5 | 2026-09-26 |
 | ADR-0016 | Fixed etherwake in the image with a NET_RAW file capability | accepted | C-4, FR-3, IF-5, NFR-7, NFR-8, R-1 | 2026-10-08 |
+| ADR-0017 | Health-state-change log lines | accepted | FR-3, FR-9, FR-10, FR-11, FR-12, FR-19, IF-3, IF-6 | 2026-10-08 |
 <!-- adr-index:end -->
 
 ## 10. Quality Requirements

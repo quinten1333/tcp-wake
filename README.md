@@ -6,8 +6,8 @@ each held request verbatim once hypha is ready. A client never sees an error
 caused by hypha being off (except the one accepted case in [Accepted
 risks](#accepted-risks-do-not-fix-these)).
 
-- Requirement baseline: `docs/specs/SRS.md` v0.2
-- Architecture and all 16 ADRs: `docs/architecture.md`, `docs/adr/`
+- Requirement baseline: `docs/specs/SRS.md` v0.3
+- Architecture and all 17 ADRs: `docs/architecture.md`, `docs/adr/`
 - Requirement-to-test mapping: `docs/specs/RTM.md`
 
 ## How it works
@@ -25,6 +25,21 @@ A goroutine probes `GET /health` while a request waits. On the first ready
 answer every held request opens its own upstream connection and is forwarded
 byte-for-byte, streaming the response back. See `docs/architecture.md` §6 for
 the runtime views.
+
+## Logs
+
+Three greppable text line forms on standard output:
+
+```
+2026-10-08T12:00:00Z wake command="/usr/sbin/etherwake -i eth0 AA:BB:CC:DD:EE:FF" status=0
+2026-10-08T12:00:00Z health state=healthy
+2026-10-08T12:00:00Z error status=504 component=wait_bound message="…"
+```
+
+One wake line per wake-command execution (the counting artefact for FR-3, FR-9,
+and FR-12), one health line per target state **change** (not per probe, the
+initial not-healthy state is not a change), and one error line per produced
+error. No request or response content is written (ADR-0010, ADR-0017).
 
 ## Build and deploy
 

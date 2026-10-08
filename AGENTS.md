@@ -6,7 +6,7 @@ tcp-wake is a wake-on-demand reverse proxy in Go deployed as a container on
 hyperion in front of hypha (normally powered off). It holds hypha-bound requests
 with no deadline, execs `etherwake` (image-installed with a `CAP_NET_RAW` file
 capability), polls hypha's `/health`, and forwards held requests verbatim once
-healthy. Source of truth: `docs/architecture.md` (arc42, 16 ADRs: 15 accepted,
+healthy. Source of truth: `docs/architecture.md` (arc42, 17 ADRs: 16 accepted,
 ADR-0005 superseded by ADR-0016) plus `docs/specs/SRS.md` v0.2 and
 `docs/implementation-plan.md`. Build order: T1 (blocking prerequisite) then
 T2–T16; ADR-0016 later replaced the wake mechanism. See
@@ -218,10 +218,14 @@ T2–T16; ADR-0016 later replaced the wake mechanism. See
   `TestADR0014ErrorBodySchema` is the place to add a fifth condition if the set
   ever grows; the FR-8/17/18 tests now only assert status + component on top of
   the shared parser.
-- **T9 / the two log lines.** `internal/proxy/log.go` has `Wake(command,
-  res)` → `<RFC3339> wake command="…" status=…` and `Error(status, detail)` →
-  `<RFC3339> error status=<code> component=<token> message="…"`, both under one
-  mutex so lines never interleave. The error line reuses the ADR-0014
+- **T9 / the three log lines.** `internal/proxy/log.go` has `Wake(command,
+  res)` → `<RFC3339> wake command="…" status=…`, `Error(status, detail)` →
+  `<RFC3339> error status=<code> component=<token> message="…"`, and (ADR-0017)
+  `Health(healthy)` → `<RFC3339> health state=healthy|unhealthy`. All three are
+  under one mutex so lines never interleave. The health line is written by the
+  `Prober` only when `Health.observe` reports a *change*, from both the cadence
+  loop and `ProbeNow`, so its count is transitions, not probes; the initial
+  not-healthy state is not logged. The error line reuses the ADR-0014
   `errorDetail`, and `Pipeline.writeAndLog` passes the same value to `writeError`
   and `Logger.Error`, so the body and the log cannot drift. Only the four
   response-producing paths are logged; a framing error is not, because it has no
@@ -243,9 +247,10 @@ T2–T16; ADR-0016 later replaced the wake mechanism. See
   Use `bootingProber(t, health, interval)`, which reports not-ready until the
   returned `boot()` is called and then observes ready, so the cadence loop and
   the test cannot race. Added in `health_test.go`.
-- **T9 / log-line count assertions.** A failing wake now writes **two** lines
-  (wake + error 500); tests must count by form (`wake command=`,
-  `" error status="`), not by total `\n`, or they will break on the error line.
+- **T9 / log-line count assertions.** A failing wake writes **two** lines
+  (wake + error 500); a health transition adds a third form. Tests must count by
+  form (`wake command=`, `" error status="`, `health state=`), not by total
+  `\n`, or they will break on the other lines.
 - **T11 / integration harness.** `internal/proxy/harness_test.go` wires the
   real path around a controllable `fakeTarget`, the recording wake command, and
   a fake client. `system` (newSystem/startSystem/restart/send/sendRaw/hold/

@@ -1056,3 +1056,33 @@ and `NewWakeTrigger` builds `["-i", iface, mac]` only when the interface is set.
 `TestNFR7TriggerExecsEtherwake` covers both the set and unset cases. The SRS
 change log and §5.5, ADR-0016, architecture §8.2, README, both examples, and
 AGENTS.md were updated to say "unset omits -i" rather than "default eth0".
+
+## [26] Health-state-change log lines (ADR-0017)
+
+The user asked for the target becoming healthy or unhealthy to be logged. The
+line is emitted at the single belief-change seam: `Health.observe` now reports
+whether it changed, and the `Prober` — the only production writer — logs
+`<RFC3339> health state=healthy|unhealthy` once per transition, from both the
+cadence loop and the on-demand `ProbeNow` (FR-19). The initial not-healthy state
+of a fresh process is not a change and is not logged. This extends ADR-0010
+(wake and error lines, no content) rather than replacing it, so ADR-0017 was
+added with status accepted; the SRS §5.6 log interface was extended and the
+baseline bumped to v0.3 (no requirement changed: IF-6 still holds).
+
+Steps taken:
+- `Health.observe` returns `changed bool`; `Logger.Health(healthy)` writes the
+  new line form; `Prober` gained a `*Logger` and a `record` helper used by both
+  the loop and `ProbeNow`. `NewProber` now takes the logger; main and the harness
+  share one `Logger` instance.
+- Tests: `TestADR0017LoggerHealthLine` (form), `TestADR0017ProberLogsStateChange`
+  (one line per change, none while unchanged, and the reverse transition through
+  `ProbeNow`), `TestADR0017HealthTransitionLoggedEndToEnd` (whole path).
+- Docs: ADR-0017, architecture §8.1 and the ADR count, SRS §5.6 + v0.3 change
+  log, README "Logs" section, AGENTS.
+
+Decisions:
+- [Log in the `Prober`, at the transition, not in `Health`: the belief stays a
+  pure state and the only writer owns the side effect. A nil logger is a test
+  stub that does not log, so existing line-count tests are unaffected.
+- [Count-by-form stays the rule; the new line is a third greppable form, so
+  FR-3/FR-9/FR-12 tests keep matching on `wake command=`.

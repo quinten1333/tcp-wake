@@ -1,6 +1,6 @@
 # Requirements Traceability Matrix — tcp-wake
 
-> Baseline: `docs/specs/SRS.md` v0.2 and `docs/architecture.md`.
+> Baseline: `docs/specs/SRS.md` v0.3 and `docs/architecture.md`.
 > One row per requirement. `req_id`, `requirement`, `source`, `priority`,
 > `verify_method`, `test_id`, `status`. The SRS assigns no separate priority, so
 > the SRS goal label (G1–G4) is carried in the `priority` column; it is the
