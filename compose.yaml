@@ -1,16 +1,13 @@
-# tcp-wake container deployment (ADR-0003).
+# tcp-wake container deployment (ADR-0003, ADR-0016).
 #
 # Host networking keeps the listen address and hypha's address on the host's
 # own network stack, so the routing entry (ADR-0002) and the wake target need
 # no port mapping. The proxy user is the image's non-root user (NFR-8).
 #
-# The two mounts that must be supplied on hyperion:
-#   * the configuration file (ADR-0011, ADR-0015)
-#   * the setuid-root wake command (ADR-0005)
-#
-# The wake-command mount MUST NOT be nosuid, or the bit is inert while the mode
-# still reads 4755 (T1, R-1). `scripts/check-deploy.sh` verifies the bit from
-# inside the running container; `restart: on-failure` covers a crash.
+# The wake tool is etherwake, installed in the image with the CAP_NET_RAW file
+# capability (ADR-0016). The one mount that must be supplied is the
+# configuration file, which must set wake_mac (and optionally wake_interface);
+# the MAC can instead be given as TCPWAKE_WAKE_MAC below, which wins.
 services:
   tcp-wake:
     build: .
@@ -19,9 +16,12 @@ services:
     network_mode: host
     restart: on-failure
     user: "10001:10001"
-    # No cap_add: the proxy runs unprivileged, and Docker's default capability
-    # set is left for the setuid-root wake command only. Do NOT set
-    # no-new-privileges: it would disable the setuid boundary NFR-7 requires.
+    # Do NOT add no-new-privileges: it would make etherwake's file capability
+    # inert and break the wake path (ADR-0016, R-1). No cap_add is needed; the
+    # capability lives on the image file, not on the container.
     volumes:
       - ${TCPWAKE_CONFIG_PATH:-/etc/tcp-wake/config.toml}:/etc/tcp-wake/config.toml:ro
-      - ${TCPWAKE_WAKE_COMMAND_PATH:-/usr/local/bin/wol-send}:/usr/local/bin/wol-send:ro
+    # The mounted config must set wake_mac. To override per deployment, add an
+    # environment block with TCPWAKE_WAKE_MAC and/or TCPWAKE_WAKE_INTERFACE;
+    # the environment wins (ADR-0011). Do not set them to an empty string, which
+    # the loader rejects rather than treating as absent.

@@ -11,14 +11,20 @@ COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/tcp-wake ./cmd/tcp-wake
 
-# Runtime stage. debian:stable-slim gives a shell for the deployment check and
-# the setuid behaviour T1 verified; the proxy runs as a non-root user (NFR-8).
+# Runtime stage. debian:stable-slim gives a shell for the deployment check; the
+# proxy runs as a non-root user (NFR-8).
 FROM debian:stable-slim
 
-# The proxy process is unprivileged. The wake command is bind-mounted from the
-# host and keeps its own file mode and owner (ADR-0005, NFR-7); it is the only
-# privileged part of the system.
-RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin tcpwake
+# etherwake is the fixed wake tool and needs a raw socket. It is installed and
+# given the narrowest privilege that lets it work, the CAP_NET_RAW file
+# capability, instead of full root (ADR-0016). libcap2-bin provides setcap and
+# getcap; getcap is used by scripts/check-deploy.sh inside the container. The
+# proxy itself stays unprivileged.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends etherwake libcap2-bin \
+    && rm -rf /var/lib/apt/lists/* \
+    && setcap cap_net_raw+ep /usr/sbin/etherwake \
+    && useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin tcpwake
 
 COPY --from=build /out/tcp-wake /usr/local/bin/tcp-wake
 
