@@ -7,7 +7,7 @@ caused by hypha being off (except the one accepted case in [Accepted
 risks](#accepted-risks-do-not-fix-these)).
 
 - Requirement baseline: `docs/specs/SRS.md` v0.3
-- Architecture and all 17 ADRs: `docs/architecture.md`, `docs/adr/`
+- Architecture and all 18 ADRs: `docs/architecture.md`, `docs/adr/`
 - Requirement-to-test mapping: `docs/specs/RTM.md`
 
 ## How it works
@@ -19,8 +19,12 @@ client ──▶ existing routing ──▶ tcp-wake ──▶ hypha
 ```
 
 The system is a single unprivileged Go process in a container with host
-networking. While hypha is not healthy a request is held open with **no deadline
-and no response bytes**; each held request triggers one `etherwake` execution.
+networking. On every request it **tries the target first**, with the upstream
+connect bounded by `probe_timeout`. If the target answers, that response is
+relayed and no wake runs; if the connect fails, the target is treated as off:
+the request is held open with **no deadline and no response bytes** and one
+`etherwake` execution is triggered. Once hypha is ready every held request is
+forwarded.
 A goroutine probes `GET /health` while a request waits. On the first ready
 answer every held request opens its own upstream connection and is forwarded
 byte-for-byte, streaming the response back. See `docs/architecture.md` §6 for
@@ -167,7 +171,6 @@ requirement or an ADR. The full risk table is `docs/architecture.md` §11.
 | A held request has **no connection timeout** | NFR-4 and §2 non-goal 7; timeouts belong to hypha and the routing layer |
 | A client that stalls mid-body can be held indefinitely (R-4) | Detecting it needs a timeout, which NFR-4 forbids |
 | The held set is **uncapped** (ADR-0012) | NFR-5 requires at least 8; growth is bounded by the client population, and the body cap bounds each request |
-| The first request after an out-of-band shutdown gets a **502** (R-8) | ADR-0008 trusts the cached health state instead of probing every forward |
 | The system holds **nothing across a restart** (FR-16) | §2 non-goal 5; restart closes held connections rather than replaying them |
 | Request/response bodies are **never logged** (ADR-0010) | §2 non-goal 3; logging them would write prompts and tokens to disk |
 | hypha's idle-shutdown can race a wake (R-3) | The two hosts do not communicate; accepted, not mitigated |
@@ -178,8 +181,12 @@ requirement or an ADR. The full risk table is `docs/architecture.md` §11.
 
 - `wait_bound` is measured from the request's arrival and is **not restarted** by
   a wake attempt (FR-8).
-- The probe runs **only** while a request is pending and on the first ready
-  answer it stops; it never probes on a timer while idle (FR-12, ADR-0008).
+- The probe runs **only** while a request is held and on the first ready answer
+  it stops; it never probes on a timer while idle (FR-12, ADR-0018).
+- The request path tries the target before waking, so an already-on target is
+  never woken and a target that goes off out-of-band is held and woken rather
+  than answered with a 502 (ADR-0018). The held client connection still gets no
+  deadline; only the upstream connect is bounded, by `probe_timeout`.
 - `wake_mac` is required and has no default; the wake command is fixed to
   `etherwake` (ADR-0016).
 - `etherwake` is exec'd **directly with an argv**: no shell and no argument

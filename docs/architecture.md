@@ -1,7 +1,7 @@
 # Architecture — tcp-wake
 
-> Conforms to: `specs/SRS.md` baseline v0.3 (traceability: `specs/DECISION_MAP.md`).
-> 17 ADRs (§9): 16 `accepted`, and ADR-0005 `superseded by ADR-0016`. Every design assertion below cites its ADR.
+> Conforms to: `specs/SRS.md` baseline v0.4 (traceability: `specs/DECISION_MAP.md`).
+> 18 ADRs (§9): 16 `accepted`, ADR-0005 `superseded by ADR-0016`, and ADR-0008 `superseded by ADR-0018`. Every design assertion below cites its ADR.
 > One thing the requirements force with no alternative, and which is therefore not an ADR: all state is in-memory and dies with the process, because §2 non-goal 5 puts holding requests across a restart out of scope.
 
 ## 1. Introduction and Goals
@@ -14,7 +14,7 @@
   3. **Reliability** — exactly one response per accepted request whose client stays connected (NFR-6).
   4. **Security** — only the wake command runs with elevated privileges (NFR-7, NFR-8).
   5. **Availability** — hypha stays off while nothing is pending (G4, via FR-12).
-- **Baseline**: SRS `specs/SRS.md` v0.3, reviewed and confirmed by the user. Change control: any change to an ADR or a section requires an impact assessment and a re-run of the traceability check on the affected requirements and ADRs.
+- **Baseline**: SRS `specs/SRS.md` v0.4, reviewed and confirmed by the user. Change control: any change to an ADR or a section requires an impact assessment and a re-run of the traceability check on the affected requirements and ADRs.
 
 ## 2. Constraints
 
@@ -72,16 +72,16 @@
 - **Top-level decomposition**:
   - **Listener** — owns the client socket; accepts, and hands the connection to Intake (ADR-0006).
   - **Intake** — retains the request as raw wire bytes and detects when it is complete, without interpreting it; enforces the body cap (ADR-0004).
-  - **Health state** — the belief, healthy or not healthy, changed only by an observation (ADR-0008).
+  - **Health state** — the belief, healthy or not healthy, changed only by an observation: a probe result or the request path's own connect attempt (ADR-0018).
   - **Held set** — the requests currently held, one goroutine each (ADR-0001, ADR-0004).
   - **Wait-bound timer** — per request, measured from arrival (FR-8).
   - **Wake trigger** — execs etherwake, once per triggering request (ADR-0016).
-  - **Probe** — polls `/health` while a request is pending, and once after a transport failure (ADR-0007, ADR-0008).
+  - **Probe** — polls `/health` while a request is held, and once after a transport failure (ADR-0007, ADR-0018).
   - **Forwarder** — sends held bytes verbatim, relays the response back, streaming (ADR-0004).
   - **Config loader** — file plus environment overrides (ADR-0011).
   - **Logger** — wake and error lines (ADR-0010).
 - **Technology choices**: Go (ADR-0001); plain HTTP on a configured address with TLS left to the routing (ADR-0006); container with host networking (ADR-0003); an image-installed etherwake with a CAP_NET_RAW file capability as the privilege boundary (ADR-0016).
-- **Per quality goal**: NFR-1 → hold with no deadline + bounded probe detection + wake trigger (ADR-0004, ADR-0007, ADR-0016). NFR-2 → direct forward with no pre-probe (ADR-0006, ADR-0008). NFR-3 → streaming relay (ADR-0001). NFR-4 → goroutine-per-held-connection with no deadline ever set (ADR-0001, ADR-0004). NFR-5 → unbounded held set with a tested floor of 8 (ADR-0012). NFR-6 → the four error paths are the only exits, each producing exactly one response (ADR-0009). NFR-7/NFR-8 → the file-capability boundary and the container specification (ADR-0016, ADR-0003).
+- **Per quality goal**: NFR-1 → hold with no deadline + bounded probe detection + wake trigger (ADR-0004, ADR-0007, ADR-0016). NFR-2 → try the target first, so a healthy target is forwarded with no wake and no pre-probe (ADR-0006, ADR-0018). NFR-3 → streaming relay (ADR-0001). NFR-4 → goroutine-per-held-connection with no deadline ever set (ADR-0001, ADR-0004). NFR-5 → unbounded held set with a tested floor of 8 (ADR-0012). NFR-6 → the four error paths are the only exits, each producing exactly one response (ADR-0009). NFR-7/NFR-8 → the file-capability boundary and the container specification (ADR-0016, ADR-0003).
 
 ## 5. Building Block View
 
@@ -114,7 +114,7 @@
 #### Health state
 
 - **Responsibility**: hold the belief about hypha, and change it only from an observation.
-- **Interfaces**: in — a probe result (FR-10, FR-11) or a transport failure (FR-19); out — healthy or not healthy, read by the request path; errors — none; the state is never inferred from a failure's cause (ADR-0008).
+- **Interfaces**: in — a probe result (FR-10, FR-11) or a forward attempt's outcome (ADR-0018); out — healthy or not healthy, read by the request path; errors — none; the state is never inferred from a failure's cause, only observed (ADR-0018).
 - **Fulfils**: FR-10, FR-11, FR-19.
 - **Open issues**: none.
 
@@ -149,7 +149,7 @@
 #### Forwarder
 
 - **Responsibility**: send a held request's bytes to hypha unchanged, and relay the response back unchanged and unbuffered.
-- **Interfaces**: in — a held request's bytes; out — one upstream connection per held request, opened without waiting for any other (FR-5), bytes written verbatim (FR-13); response bytes relayed as they arrive (FR-14, FR-15); errors — a transport-level failure gives that client a 502 (FR-18) and triggers a probe (FR-19).
+- **Interfaces**: in — a held request's bytes; out — one upstream connection per held request, opened without waiting for any other (FR-5), bytes written verbatim (FR-13); response bytes relayed as they arrive (FR-14, FR-15); errors — a failed connect means the target is off, so the request is held and woken (ADR-0018); a failure after the connection is established gives that client a 502 (FR-18) and triggers a probe (FR-19).
 - **Fulfils**: FR-1, FR-4, FR-5, FR-13, FR-14, FR-15, FR-18, IF-2, NFR-2, NFR-3.
 - **Open issues**: none.
 
@@ -169,16 +169,16 @@
 
 ## 6. Runtime View
 
-### 6.1 RS-1 — request while hypha is healthy (FR-1, NFR-2)
+### 6.1 RS-1 — request while hypha is up (FR-1, NFR-2, ADR-0018)
 
-- **Trigger**: a request arrives and the state is healthy.
-- **Steps**: 1. Listener accepts; Intake retains the bytes. 2. Health state is healthy, so no hold, no wake. 3. Forwarder opens one upstream connection and writes the bytes verbatim. 4. hypha's response is relayed back as it arrives.
-- **Failure case**: the upstream connection fails at the transport level → 502 to that client, then a probe sets the state (RS-7).
+- **Trigger**: a request arrives, whatever the cached state.
+- **Steps**: 1. Listener accepts; Intake retains the bytes. 2. Forwarder opens one upstream connection, bounded by `probe_timeout`, and writes the bytes verbatim. 3. hypha's response is relayed back as it arrives. 4. The successful attempt marks the state healthy.
+- **Failure case**: the connection cannot be established → the target is treated as off and the request holds and wakes (RS-2); a failure after the connection is established → 502 to that client, then a probe sets the state (RS-7).
 
-### 6.2 RS-2 — first request while hypha is off (FR-2, FR-3, NFR-1)
+### 6.2 RS-2 — first request while hypha is off (FR-2, FR-3, NFR-1, ADR-0018)
 
-- **Trigger**: a request arrives and the state is not healthy.
-- **Steps**: 1. Intake retains the bytes; the request joins the held set and its wait-bound timer starts. 2. Wake trigger execs the configured command once and logs one line. 3. Probe polls `/health` every 2 s with a 1 s timeout. 4. On the first ready answer the state becomes healthy. 5. Forwarder opens an upstream connection and writes the held bytes verbatim. 6. hypha's response is relayed to the client, streamed if it is a stream.
+- **Trigger**: a request arrives and the target cannot be reached.
+- **Steps**: 1. Intake retains the bytes; the optimistic connect attempt fails within `probe_timeout`, so the state becomes not healthy. 2. The request joins the held set and its wait-bound timer starts. 3. Wake trigger execs the configured command once and logs one line. 4. Probe polls `/health` every 2 s with a 1 s timeout. 5. On the first ready answer the state becomes healthy. 6. Forwarder opens an upstream connection and writes the held bytes verbatim. 7. hypha's response is relayed to the client, streamed if it is a stream.
 - **Failure case**: hypha never answers → the wait-bound timer fires at 120 s and the client gets a 504 naming the bound (RS-5). The wake command exits non-zero → 500 naming the command, immediately (RS-6).
 
 ### 6.3 RS-3 — more requests during the boot window (FR-4, FR-5, FR-6)
@@ -205,11 +205,11 @@
 - **Steps**: 1. Wake trigger observes the non-zero exit. 2. The triggering request's client receives 500 immediately, with a body naming the wake command. 3. The error is logged.
 - **Failure case**: because each request triggers its own execution, a broken command fails each request on its own execution rather than through any shared state — so the failure is per-request, not a stuck global state (R-6).
 
-### 6.7 RS-7 — a forward fails while the state is healthy (FR-18, FR-19)
+### 6.7 RS-7 — a forward fails after the connection is established (FR-18, FR-19)
 
-- **Trigger**: a forward fails at the transport level — for example hypha was powered off out-of-band after the last probe.
+- **Trigger**: hypha accepts the connection but the exchange then fails — for example hypha is killed mid-response.
 - **Steps**: 1. Forwarder observes the transport failure. 2. That client receives 502. 3. A probe runs immediately. 4. Health state is set from the probe's result. 5. The next request behaves according to that state — held and woken if not healthy, forwarded if healthy.
-- **Failure case**: this is the one path where a request can receive an error caused by hypha being off (ADR-0008). It is the accepted cost of not probing before every forward.
+- **Failure case**: the only remaining path where a request can receive an error caused by hypha failing. A target that cannot be reached at all no longer reaches this path: it is held and woken (RS-2, ADR-0018).
 
 ### 6.8 RS-8 — restart while requests are held (FR-16)
 
@@ -256,11 +256,11 @@ Four error paths, and they are the only responses the system itself produces; ev
 
 Each body is a JSON object with a nested `error` object carrying `message`, an enumerated `component` (`wait_bound`, `wake_command`, `target`, or `held_body_cap`), and, for the two bounded conditions, a `limit` value — matching hypha's own `{"error":{"message":…}}` envelope so one parser handles both the origin's errors and the proxy's (ADR-0014). For example, a wait-bound expiry is `{"error":{"message":"…","component":"wait_bound","limit":"120s"}}`.
 
-A transport failure additionally triggers a probe, so the state is corrected by observation rather than by inference (FR-19, ADR-0008). The state is never inferred from a failure's cause.
+A transport failure additionally triggers a probe, so the state is corrected by observation rather than by inference (FR-19, ADR-0018). The state is never inferred from a failure's cause.
 
 ### 8.5 Connection lifetimes
 
-A held connection is open with no response bytes and **no deadline at all** — not a read deadline, not a write deadline (NFR-4, ADR-0001). It ends in one of three ways: the response arrives, the wait-bound timer fires, or the client closes. The system applies no connection timeout of its own anywhere, which is §2 non-goal 7; timeouts belong to llama.cpp and to the routing layer on either side.
+A held connection is open with no response bytes and **no deadline at all** — not a read deadline, not a write deadline (NFR-4, ADR-0001). It ends in one of three ways: the response arrives, the wait-bound timer fires, or the client closes. The system applies no connection timeout of its own to a client connection, which is §2 non-goal 7. The upstream connect attempt that opens a forward is bounded by `probe_timeout`, so an unreachable target is detected quickly; that is a timeout on the system's own dial, not on a client (ADR-0018).
 
 ### 8.6 Security and data ownership
 
@@ -280,7 +280,7 @@ Client authentication is not this system's job; the routing layer is the trust b
 | ADR-0005 | setuid-root wake command | superseded | C-4, FR-3, NFR-7, NFR-8 | 2026-09-23 |
 | ADR-0006 | Plain HTTP on a configured address, TLS left to the existing routing | accepted | FR-13, IF-1, IF-2 | 2026-09-23 |
 | ADR-0007 | Probe cadence 2 s interval with a 1 s timeout | accepted | C-2, C-5, FR-10, FR-11, IF-3, NFR-1 | 2026-09-23 |
-| ADR-0008 | Trust the cached health state, and probe only after a transport failure | accepted | FR-1, FR-10, FR-11, FR-18, FR-19, NFR-2 | 2026-09-23 |
+| ADR-0008 | Trust the cached health state, and probe only after a transport failure | superseded | FR-1, FR-10, FR-11, FR-18, FR-19, NFR-2 | 2026-09-23 |
 | ADR-0009 | JSON error bodies naming the failed component | accepted | FR-8, FR-17, FR-18, FR-20 | 2026-09-23 |
 | ADR-0010 | One log line per wake execution and per error | accepted | FR-3, FR-9, FR-12, IF-6 | 2026-09-23 |
 | ADR-0011 | Config file with environment-variable overrides | accepted | IF-5 | 2026-09-23 |
@@ -290,6 +290,7 @@ Client authentication is not this system's job; the routing layer is the trust b
 | ADR-0015 | Configuration file discovery and the `--config` flag | accepted | IF-5 | 2026-09-26 |
 | ADR-0016 | Fixed etherwake in the image with a NET_RAW file capability | accepted | C-4, FR-3, IF-5, NFR-7, NFR-8, R-1 | 2026-10-08 |
 | ADR-0017 | Health-state-change log lines | accepted | FR-3, FR-9, FR-10, FR-11, FR-12, FR-19, IF-3, IF-6 | 2026-10-08 |
+| ADR-0018 | Try the target before waking | accepted | C-5, FR-1, FR-2, FR-3, FR-8, FR-16, FR-18, FR-19, NFR-1, NFR-2, NFR-4, R-8 | 2026-10-08 |
 <!-- adr-index:end -->
 
 ## 10. Quality Requirements
@@ -329,7 +330,7 @@ Client authentication is not this system's job; the routing layer is the trust b
 | R-5 — the held set is uncapped, so growth has no defined behaviour | ADR-0012, NFR-5 | Memory exhaustion rather than a clean refusal, if the client population grows or a client retries in a loop | The body cap bounds each request; the client population is a couple of agents. If it grows, ADR-0012 should be revisited |
 | R-6 — a broken wake command fails every request immediately, which looks exactly like the outage this project prevents | FR-3, FR-17, ADR-0016 | Every hypha-bound request gets a 500 until the command is fixed | The 500 body names the wake command, so the cause is distinguishable from hypha being off; the deployment check in R-1 covers the common cause |
 | R-7 — the listener is plain HTTP, so reaching it from outside hyperion would expose prompts in the clear | ADR-0006, §2 non-goal 6 | Request bodies, including prompts and tokens, readable on the network | The listen address must not be externally reachable; the system itself does not enforce this |
-| R-8 — the first request after an out-of-band shutdown fails with a 502 | ADR-0008, FR-18, G1 | One error caused by hypha being off, which G1 otherwise excludes | Accepted in ADR-0008: the alternative, probing before every forward, adds a round trip to every healthy request and still does not close the window |
+| R-8 — resolved by ADR-0018 | ADR-0018, FR-18, G1 | none: a target that goes off out-of-band is now held and woken instead of receiving a 502 | Removed; the request path tries the target first, so an unreachable connection becomes the wake path |
 | R-9 — adding Go and a second HTTP implementation widens hyperion's maintenance surface | ADR-0001 | Another toolchain and HTTP stack to keep patched alongside the existing routing layer | Accepted: this is the cost of a runtime that makes hold, parallel release, and streaming structural; the nginx-module alternative was worse |
 | R-10 — the hypha route is described in two places and can drift | ADR-0002 | A request for another service could arrive on the system's port and wake hypha for the wrong client | Keep the routing entry and the configured `listen_address` in step; the route is checked as part of the deployment verification |
 | R-11 — the container runtime becomes a host dependency of a system whose job is to run when nothing else is | ADR-0003 | A misbehaving or stopped container runtime takes the wake path down | Accepted: everything on hyperion is deployed as a container; a systemd unit was rejected as the single operational exception |
@@ -359,9 +360,9 @@ Client authentication is not this system's job; the routing layer is the trust b
 
 | SRS ID | Addressed by (element / ADR) |
 |---|---|
-| FR-1 | Listener + Forwarder, ADR-0006 |
-| FR-2 | Held set + Intake, ADR-0004 |
-| FR-3 | Wake trigger (etherwake), ADR-0016 |
+| FR-1 | Listener + Forwarder try-first path, ADR-0006 + ADR-0018 |
+| FR-2 | Held set + Intake, ADR-0004 + ADR-0018 |
+| FR-3 | Wake trigger (etherwake), ADR-0016 + ADR-0018 |
 | FR-4 | Forwarder release, ADR-0004 |
 | FR-5 | Forwarder, one connection per held request, ADR-0001 |
 | FR-6 | Held set, ADR-0004 |
@@ -376,8 +377,8 @@ Client authentication is not this system's job; the routing layer is the trust b
 | FR-15 | Forwarder streaming relay, ADR-0001 |
 | FR-16 | In-memory state, §2 non-goal 5 |
 | FR-17 | Wake trigger error path, ADR-0009 |
-| FR-18 | Forwarder error path, ADR-0009 |
-| FR-19 | Probe after transport failure, ADR-0008 |
+| FR-18 | Forwarder post-connect error path, ADR-0009 + ADR-0018 |
+| FR-19 | Probe after transport failure, ADR-0018 |
 | FR-20 | Intake body cap, ADR-0004 + ADR-0009 |
 | IF-1 | Listener, ADR-0006 |
 | IF-2 | Forwarder, ADR-0004 |
@@ -386,7 +387,7 @@ Client authentication is not this system's job; the routing layer is the trust b
 | IF-5 | Config loader, ADR-0011 + ADR-0013 |
 | IF-6 | Logger, ADR-0010 |
 | NFR-1 | Held set + Probe + Wake trigger, ADR-0007 |
-| NFR-2 | Listener + Forwarder direct path, ADR-0006 + ADR-0008 |
+| NFR-2 | Listener + Forwarder try-first path, ADR-0006 + ADR-0018 |
 | NFR-3 | Forwarder streaming relay, ADR-0001 |
 | NFR-4 | Listener + Intake, no deadline, ADR-0001 |
 | NFR-5 | Held set, ADR-0012 |

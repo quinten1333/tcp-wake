@@ -1,6 +1,6 @@
 # Requirements Traceability Matrix — tcp-wake
 
-> Baseline: `docs/specs/SRS.md` v0.3 and `docs/architecture.md`.
+> Baseline: `docs/specs/SRS.md` v0.4 and `docs/architecture.md`.
 > One row per requirement. `req_id`, `requirement`, `source`, `priority`,
 > `verify_method`, `test_id`, `status`. The SRS assigns no separate priority, so
 > the SRS goal label (G1–G4) is carried in the `priority` column; it is the
@@ -30,7 +30,7 @@
 | FR-15 | When hypha's response is streamed, the system shall relay each chunk to the client as the chunk arrives. | SRS §3 | G2 | test | TestFR15StreamsChunksUnbuffered | verified |
 | FR-16 | When the system restarts while requests are held, the system shall not forward those requests to hypha. | SRS §3 | G1 | test | TestFR16RestartMidHoldForwardsNothing; TestFR16ShutdownDuringWakeWritesNoResponse | verified |
 | FR-17 | If the wake command exits with a non-zero status, then the system shall return an error response to that request's client immediately, naming the wake command as the failed component. | SRS §3 | G1 | test | TestFR17ClientGets500NamingWakeCommand; TestFR17NonZeroExitIsReported | verified |
-| FR-18 | If a forward to hypha fails at the transport level, then the system shall return an error response to that request's client. | SRS §3 | G1 | test | TestFR18TransportFailureGives502 | verified |
+| FR-18 | If a forward to hypha fails at the transport level after the connection is established, then the system shall return an error response to that request's client. | SRS §3 | G1 | test | TestFR18TransportFailureGives502 | verified |
 | FR-19 | If a forward to hypha fails at the transport level, then the system shall probe hypha's health endpoint and set hypha's state from that probe's result. | SRS §3 | G1 | test | TestFR19TransportFailureTriggersProbe | verified |
 | FR-20 | If a request body exceeds the configured held body cap, then the system shall return an error response naming the cap. | SRS §3 | G1 | test | TestFR20BodyOverCapGets413 | verified |
 | NFR-1 | The system shall return the first response for a request received while hypha is not healthy within 120 s of receiving that request on the reference network. | SRS §4 | G1 | test | TestNFR1FirstResponseWithinBound; TestNFR1DefaultWaitBoundCoversBoot | verified |

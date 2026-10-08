@@ -1086,3 +1086,43 @@ Decisions:
   stub that does not log, so existing line-count tests are unaffected.
 - [Count-by-form stays the rule; the new line is a third greppable form, so
   FR-3/FR-9/FR-12 tests keep matching on `wake command=`.
+
+## [28] Try the target before waking (ADR-0018)
+
+The user reported that a request to an already-on hypha still ran the wake
+command, because a fresh process starts not healthy and the request path woke on
+the cached belief (ADR-0008). The fix is the model the user asked for: assume the
+target is up, try to connect and forward first, and only when the connect fails
+mark it unhealthy, hold the request, and wake.
+
+Implementing it:
+- `Forwarder` now dials with `net.DialTimeout` bounded by `probe_timeout` and
+  wraps a dial failure in `ErrTargetUnreachable`; any other error is a failure
+  after the connection was established.
+- `Pipeline.Handle` calls `Forward` first. Success records the target healthy
+  (`Prober.Observe(true)`) and returns. An `ErrTargetUnreachable` records it
+  unhealthy, runs the wake command once (FR-3), holds under the wait bound, and
+  forwards again once healthy. Any other error is the FR-18 502 plus `ProbeNow`.
+- `Prober.Observe` is the shared belief+log seam, so a transition is logged once
+  (ADR-0017) whether it came from an attempt or a probe.
+- The harness `fakeTarget` now models “off” as a closed port: it picks a port
+  without binding and `setReady(true)` starts listening. This is required because
+  reachability is the readiness signal in router mode (C-5); a target answering
+  503 while still accepting connections no longer models an off host.
+
+Consequences, recorded in ADR-0018 which supersedes ADR-0008:
+- No wake when the target is already up; the first request after a restart
+  forwards directly.
+- R-8 is removed: a target that goes off out-of-band is held and woken instead of
+  502'd, so G1 holds there too.
+- FR-18 is narrowed to a failure after the connection is established; the SRS was
+  bumped to v0.4 with a change log.
+- The upstream connect has a timeout, amending §8.5's “no connection timeout
+  anywhere”; the held client connection still has no deadline (NFR-4).
+
+Tests: `TestADR0018ReachableTargetForwardsWithoutWaking`,
+`TestADR0018UnreachableTargetHeldAndWoken`, and
+`TestADR0018OutOfBandShutdownWakesInsteadOf502`; `TestFR18TransportFailureGives502`
+now uses a target that accepts then closes, and `TestForwardNoClientDeadlineInSource`
+allows the dial timeout while keeping client deadlines out. FR-4/FR-5 and NFR-5
+were rewritten onto the harness now that an off target is a closed port.

@@ -6,7 +6,7 @@ tcp-wake is a wake-on-demand reverse proxy in Go deployed as a container on
 hyperion in front of hypha (normally powered off). It holds hypha-bound requests
 with no deadline, execs `etherwake` (image-installed with a `CAP_NET_RAW` file
 capability), polls hypha's `/health`, and forwards held requests verbatim once
-healthy. Source of truth: `docs/architecture.md` (arc42, 17 ADRs: 16 accepted,
+healthy. Source of truth: `docs/architecture.md` (arc42, 18 ADRs: 16 accepted,
 ADR-0005 superseded by ADR-0016) plus `docs/specs/SRS.md` v0.2 and
 `docs/implementation-plan.md`. Build order: T1 (blocking prerequisite) then
 T2–T16; ADR-0016 later replaced the wake mechanism. See
@@ -73,12 +73,12 @@ T2–T16; ADR-0016 later replaced the wake mechanism. See
 - **T4 / Health state and Probe.** `internal/proxy/health.go` holds both the
   belief (`Health`) and the cadence runner (`Prober`); `probe.go` holds the HTTP
   observation. `Health.observe(ready)` is **unexported on purpose**: a probe
-  result is the only input the state accepts, so ADR-0008's "never infer from a
+  result is the only input the state accepts, so ADR-0018's "never infer from a
   failure's cause" is structural — no exported setter exists for the forwarder to
   misuse. `WaitHealthyOr(ctx, done)` blocks until healthy, `done` (the request's
   `Discarded()`), or ctx; it uses a close-and-replace broadcast channel so a
   waiter cannot miss a transition. A new process starts not healthy (FR-16).
-- **T4 / probe gating (FR-12, ADR-0008).** `Prober.RequestStarted` starts the
+- **T4 / probe gating (FR-12, ADR-0018, superseding ADR-0008).** `Prober.RequestStarted` starts the
   loop only on the 0->1 pending edge and only while `!health.Healthy()`;
   `RequestDone` stops it at pending 0. The loop probes **immediately**, then every
   `probe_interval`, and exits on the **first ready** observation, so a healthy
@@ -164,20 +164,35 @@ T2–T16; ADR-0016 later replaced the wake mechanism. See
   bounds of 100–650 ms with generous upper assertions so `-race` runs are not
   flaky.
 - **T7 / Forwarder (transparent relay).** `internal/proxy/forward.go` dials
-  the target with bare `net.Dial` (no timeout — §8.5/§2 non-goal 7) and writes
-  `p.Bytes` verbatim; it never parses or re-serialises the request. The response
-  is relayed with its framing tracked only to know where it ends: chunked via
-  the shared `walkChunks` (each segment written to the client as it arrives,
-  FR-15), `Content-Length` via `io.CopyN`, otherwise `io.Copy` until close. The
-  head is framed **before** it is written, and `Forward` returns an error only
-  before any client byte is written; after that, upstream failures are swallowed
-  so there is exactly one response (NFR-6). A returned error makes the pipeline
-  write the 502 naming `target` and call `ProbeNow` (FR-18/FR-19).
-- **T7 / no timeouts.** Nothing on the forward path sets a deadline or uses
-  `DialTimeout`; `TestForwardNoTimeoutInSource` scans `forward.go` for
-  `DialTimeout`/`Set*Deadline`. Accepted limitation: a `HEAD` response's
-  `Content-Length` with no body would make the relay wait, because the method is
-  never parsed — HEAD is outside the client profile.
+  the target with `net.DialTimeout` bounded by the configured `probe_timeout`
+  (ADR-0018) and writes `p.Bytes` verbatim; it never parses or re-serialises the
+  request. The response is relayed with its framing tracked only to know where
+  it ends: chunked via the shared `walkChunks` (each segment written to the
+  client as it arrives, FR-15), `Content-Length` via `io.CopyN`, otherwise
+  `io.Copy` until close. The head is framed **before** it is written, and
+  `Forward` returns an error only before any client byte is written; after that,
+  upstream failures are swallowed so there is exactly one response (NFR-6). A
+  dial failure wraps `ErrTargetUnreachable`; `Pipeline.Handle` uses that sentinel
+  to hold and wake instead of answering (ADR-0018). Any other returned error is
+  the post-connect 502 naming `target`, with `ProbeNow` (FR-18/FR-19).
+- **T7 / timeouts.** The held **client** connection still gets no deadline of
+  any kind (NFR-4); only the upstream connect is bounded, by `probe_timeout`
+  (ADR-0018). `TestForwardNoClientDeadlineInSource` scans `forward.go` for
+  `Set*Deadline` and deliberately allows `DialTimeout`. Accepted limitation: a
+  `HEAD` response's `Content-Length` with no body would make the relay wait,
+  because the method is never parsed — HEAD is outside the client profile.
+- **ADR-0018 / try the target before waking.** `Pipeline.Handle` calls `Forward`
+  first, whatever the belief, so a request to an already-on target forwards with
+  no wake. Only an `ErrTargetUnreachable` dial failure records the target
+  unhealthy (`Prober.Observe(false)`), runs the wake command, and holds. A
+  successful forward records it healthy (`Prober.Observe(true)`), so the request
+  path refreshes the belief and the transition is logged (ADR-0017). This
+  supersedes ADR-0008 and removes R-8: an out-of-band shutdown is held and woken
+  rather than 502'd. The harness `fakeTarget` now models “off” as a **closed
+  port** (it picks a port without binding, and `setReady(true)` starts listening)
+  because reachability is the readiness signal in router mode (C-5); a target
+  that merely answers `503` on `/health` while still accepting connections no
+  longer models an off host.
 - **T7 / shared chunk walker and head framing.** `walkChunks(r, onSize, emit)` in
   `intake.go` is shared by Intake (cap-enforcing, buffering) and the response
   relay (uncapped, streaming), and the relay reuses `readHead` and `framing` for
@@ -260,7 +275,7 @@ T2–T16; ADR-0016 later replaced the wake mechanism. See
   `requestPath` parses with `strings.Fields` on the request line — cutting once
   on a space leaves the HTTP version attached and misclassifies every probe.
   The target starts not ready; a test flips it with `setReady`, so the state
-  change still comes from a real probe (ADR-0008) and cannot race the loop.
+  change still comes from a real probe (ADR-0018) and cannot race the loop.
 
 - **SOLID review (post-T16).** File layout after the review: `health.go`
   (`Health` belief) and `prober.go` (`Prober` cadence); `intake.go` (Intake +

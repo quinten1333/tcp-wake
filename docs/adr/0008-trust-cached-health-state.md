@@ -2,7 +2,7 @@
 
 ```yaml
 ---
-status: accepted
+status: superseded by ADR-0018
 date: 2026-09-23
 decision-makers: [the user]
 consulted: []

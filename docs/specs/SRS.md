@@ -2,7 +2,7 @@
 
 > Subject in every requirement is **the system**: the wake-on-demand reverse proxy on hyperion.
 > Normative keyword: `shall` marks a requirement. `will` states a fact. `should` marks an uncommitted goal.
-> **Baseline v0.3** — reviewed and confirmed by the user.
+> **Baseline v0.4** — reviewed and confirmed by the user.
 > Change control: any change to this document after baseline requires an impact assessment and a re-run of the pitfalls checklist on the changed requirement and its trace links.
 >
 > **Change log** — v0.2 (2026-10-08, ADR-0016): the wake mechanism is fixed to
@@ -18,6 +18,13 @@
 > IF-6 still requires one line per wake execution, and FR-3/FR-9/FR-12 still
 > count wake executions. The new line is an addition to the interface, not a new
 > required behaviour.
+>
+> **Change log** — v0.4 (2026-10-08, ADR-0018): the request path now tries the
+> target first, with the upstream connect bounded by the probe timeout, and only
+> holds and wakes when that connection cannot be established. FR-18 is narrowed
+> to a transport failure *after* the connection is established; an unreachable
+> target is held and woken, removing the accepted risk R-8. §5.1 and §5.2 are
+> amended. No other requirement changes.
 
 ## 1. Goal and Context
 
@@ -80,7 +87,7 @@
 | FR-15 | When hypha's response is streamed, the system shall relay each chunk to the client as the chunk arrives. | test: a stream of 100 chunks emitted 1 s apart reaches the client without batching | G2 |
 | FR-16 | When the system restarts while requests are held, the system shall not forward those requests to hypha. | test: restart mid-hold, then assert hypha's access log shows no forward for the held requests | G1 |
 | FR-17 | If the wake command exits with a non-zero status, then the system shall return an error response to that request's client immediately, naming the wake command as the failed component. | test: set an invalid wake interface so `etherwake` exits non-zero, and assert the error body names the wake command | G1 |
-| FR-18 | If a forward to hypha fails at the transport level, then the system shall return an error response to that request's client. | test: drop hypha's listener while the system believes hypha healthy, then assert the client receives an error | G1 |
+| FR-18 | If a forward to hypha fails at the transport level after the connection is established, then the system shall return an error response to that request's client. | test: have hypha accept the connection then drop it, and assert the client receives an error | G1 |
 | FR-19 | If a forward to hypha fails at the transport level, then the system shall probe hypha's health endpoint and set hypha's state from that probe's result. | test: after a transport-level forward failure, the recorded state matches the probe's result and the next request behaves accordingly | G1 |
 | FR-20 | If a request body exceeds the configured held body cap, then the system shall return an error response naming the cap. | test: send a body above the configured cap and assert the error names it | G1 |
 
@@ -119,7 +126,7 @@
   |---|---|---|
   | The wait bound elapses (FR-8) | 504 | the wait bound |
   | The wake command exits non-zero (FR-17) | 500 | the wake command |
-  | A forward fails at the transport level (FR-18) | 502 | hypha as unreachable |
+  | A forward fails at the transport level after the connection is established (FR-18) | 502 | hypha as unreachable |
   | A request body exceeds the held body cap (FR-20) | 413 | the held body cap |
 
   The wait bound is measured from the request's arrival and is not restarted by a wake-command execution (FR-8), so a request's total wait cannot exceed the bound.
@@ -130,7 +137,7 @@
 - **Ends**: the system ↔ hypha's HTTP listener.
 - **Crosses**: the forwarded request bytes outbound; hypha's response bytes inbound.
 - **Format**: HTTP over TCP, one upstream connection per held request, opened in parallel across held requests (FR-5). Streamed responses are relayed chunk by chunk (FR-15).
-- **Failure**: hypha's own error responses are relayed unchanged as responses (FR-14). A transport-level failure produces an error for that request's client (FR-18) and triggers an immediate health probe whose result sets hypha's state (FR-19). The system does not probe before forwarding, so one forward can fail after an out-of-band shutdown before the state catches up; the probe then decides whether the next request holds and wakes or forwards directly.
+- **Failure**: hypha's own error responses are relayed unchanged as responses (FR-14). A failure to establish the connection means hypha is off: that request is held, the wake command runs, and it is forwarded once hypha is ready (ADR-0018). A transport-level failure *after* the connection is established produces an error for that request's client (FR-18) and triggers an immediate health probe whose result sets hypha's state (FR-19).
 
 ### 5.3 Health interface (system ↔ hypha)
 
