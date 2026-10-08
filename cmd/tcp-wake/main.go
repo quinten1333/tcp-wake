@@ -23,19 +23,21 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// The health belief, the probe that writes it (T4), the wake trigger, and
-	// the one-line log (T5). The pipeline wakes a not-healthy target once per
-	// request and holds the request until the probe reports it healthy.
-	health := proxy.NewHealth()
-	prober := proxy.NewProber(cfg, health)
-	defer prober.Close()
+	// The one-line log must be writable before anything can log, because it is
+	// the counting artefact for FR-3, FR-9, and FR-12 and the record of health
+	// transitions (SRS §5.6, ADR-0017).
 	logger := proxy.NewLogger(os.Stdout)
-	// The log is the counting artefact for FR-3, FR-9, and FR-12, so an
-	// unwritable log is a start-time failure (SRS §5.6).
 	if err := logger.Ready(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+
+	// The health belief, the probe that writes it (T4) and logs each change
+	// (ADR-0017), and the wake trigger. The pipeline wakes a not-healthy target
+	// once per request and holds the request until the probe reports it healthy.
+	health := proxy.NewHealth()
+	prober := proxy.NewProber(cfg, health, logger)
+	defer prober.Close()
 	wake := proxy.NewWakeTrigger(cfg)
 	forward, err := proxy.NewForwarder(cfg.TargetAddress)
 	if err != nil {

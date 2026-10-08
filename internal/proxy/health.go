@@ -32,20 +32,22 @@ func (h *Health) Healthy() bool {
 	return h.healthy
 }
 
-// observe sets the belief from a probe result and wakes every waiter when it
-// becomes healthy. It is unexported on purpose: a probe result is the only
-// input the state accepts (ADR-0008).
-func (h *Health) observe(ready bool) {
+// observe sets the belief from a probe result and reports whether it changed.
+// It wakes every waiter when it becomes healthy. It is unexported on purpose: a
+// probe result is the only input the state accepts (ADR-0008). The caller that
+// observes production state logs the transition (ADR-0017).
+func (h *Health) observe(ready bool) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if ready == h.healthy {
-		return
+		return false
 	}
 	h.healthy = ready
 	if ready {
 		close(h.changed)
 		h.changed = make(chan struct{})
 	}
+	return true
 }
 
 // WaitHealthyOr blocks until the belief is healthy, done is closed, or ctx is

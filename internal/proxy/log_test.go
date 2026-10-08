@@ -287,3 +287,50 @@ func TestFR12NoLogLinesWhileIdle(t *testing.T) {
 		t.Fatalf("wrote %d log lines while idle, want 0 (FR-12):\n%s", got, log.String())
 	}
 }
+
+// healthLineCount counts the target state-change lines, the counting artefact
+// for ADR-0017's transitions.
+func healthLineCount(s string) int { return strings.Count(s, "health state=") }
+
+// TestADR0017LoggerHealthLine covers the line form: one line per call, a
+// timestamp, and the new state, greppable.
+func TestADR0017LoggerHealthLine(t *testing.T) {
+	var buf bytes.Buffer
+	logger := NewLogger(&buf)
+
+	logger.Health(false)
+	logger.Health(true)
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("wrote %d health lines, want 2 (ADR-0017):\n%s", len(lines), buf.String())
+	}
+	if !strings.Contains(lines[0], "health state=unhealthy") {
+		t.Errorf("first line = %q, want the unhealthy state", lines[0])
+	}
+	if !strings.Contains(lines[1], "health state=healthy") {
+		t.Errorf("second line = %q, want the healthy state", lines[1])
+	}
+	for _, line := range lines {
+		if _, err := time.Parse(time.RFC3339, strings.Fields(line)[0]); err != nil {
+			t.Fatalf("health line does not start with an RFC3339 timestamp: %q", line)
+		}
+	}
+}
+
+// TestADR0017HealthTransitionLoggedEndToEnd drives the whole path: a request is
+// held while the target is not healthy, the target becomes ready, and exactly
+// one healthy transition line is written.
+func TestADR0017HealthTransitionLoggedEndToEnd(t *testing.T) {
+	s := newSystem(t, systemOptions{})
+
+	conn := s.send()
+	s.waitHeld(1)
+	s.target.setReady(true)
+	readAll(t, conn)
+
+	waitFor(t, "healthy transition line", func() bool { return healthLineCount(s.log.String()) == 1 })
+	if !strings.Contains(s.log.String(), "health state=healthy") {
+		t.Fatalf("no healthy state line after the target became ready:\n%s", s.log.String())
+	}
+}

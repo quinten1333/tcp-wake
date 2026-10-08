@@ -265,15 +265,16 @@ func (s *system) restart() *system {
 func startSystem(t *testing.T, cfg *config.Config, target *fakeTarget, wakeRec, wakeCmd string) *system {
 	t.Helper()
 	log := &syncBuffer{}
+	logger := NewLogger(log)
 	health := NewHealth()
-	prober := NewProber(cfg, health)
+	prober := NewProber(cfg, health, logger)
 	forwarder, err := NewForwarder(cfg.TargetAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	pipeline := NewPipeline(ctx, cfg.WaitBound, health, prober, &WakeTrigger{command: wakeCmd}, forwarder, NewLogger(log))
-	listener := NewListener(cfg, pipeline.Handle, NewLogger(log))
+	pipeline := NewPipeline(ctx, cfg.WaitBound, health, prober, &WakeTrigger{command: wakeCmd}, forwarder, logger)
+	listener := NewListener(cfg, pipeline.Handle, logger)
 
 	addrCh := make(chan string, 1)
 	listener.listen = func(network, address string) (net.Listener, error) {

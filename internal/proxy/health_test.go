@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -57,7 +58,7 @@ func TestFR10ProbeReadySetsHealthy(t *testing.T) {
 	defer srv.Close()
 
 	h := NewHealth()
-	pr := NewProber(probeConfig(srv.URL), h)
+	pr := NewProber(probeConfig(srv.URL), h, NewLogger(io.Discard))
 
 	if !pr.ProbeNow(context.Background()) {
 		t.Fatal("ProbeNow reported not ready for a ready endpoint")
@@ -77,7 +78,7 @@ func TestFR11Probe503StaysNotHealthy(t *testing.T) {
 	defer srv.Close()
 
 	h := NewHealth()
-	pr := NewProber(probeConfig(srv.URL), h)
+	pr := NewProber(probeConfig(srv.URL), h, NewLogger(io.Discard))
 
 	if pr.ProbeNow(context.Background()) {
 		t.Fatal("ProbeNow reported ready for a 503 endpoint")
@@ -104,7 +105,7 @@ func TestFR11ProbeTimeoutStaysNotHealthy(t *testing.T) {
 	cfg := probeConfig(srv.URL)
 	cfg.ProbeTimeout = 30 * time.Millisecond
 	h := NewHealth()
-	pr := NewProber(cfg, h)
+	pr := NewProber(cfg, h, NewLogger(io.Discard))
 
 	start := time.Now()
 	if pr.ProbeNow(context.Background()) {
@@ -143,7 +144,7 @@ func TestIF3ReadyRequiresStatusAndBody(t *testing.T) {
 			defer srv.Close()
 
 			h := NewHealth()
-			pr := NewProber(probeConfig(srv.URL), h)
+			pr := NewProber(probeConfig(srv.URL), h, NewLogger(io.Discard))
 			if got := pr.ProbeNow(context.Background()); got != tc.want {
 				t.Fatalf("ProbeNow = %v, want %v", got, tc.want)
 			}
@@ -170,7 +171,7 @@ func TestIF3ProbeHitsConfiguredPath(t *testing.T) {
 	cfg := probeConfig(srv.URL)
 	cfg.HealthPath = "/livez"
 	h := NewHealth()
-	pr := NewProber(cfg, h)
+	pr := NewProber(cfg, h, NewLogger(io.Discard))
 	pr.ProbeNow(context.Background())
 
 	select {
@@ -273,7 +274,7 @@ func TestFR19ProbeNowSetsStateFromResult(t *testing.T) {
 	defer down.Close()
 
 	h := NewHealth()
-	pr := NewProber(probeConfig(down.URL), h)
+	pr := NewProber(probeConfig(down.URL), h, NewLogger(io.Discard))
 	if pr.ProbeNow(context.Background()) {
 		t.Fatal("probe against a 503 target reported ready")
 	}
@@ -303,5 +304,58 @@ func TestHealthStateUnchangedWithoutProbe(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if !h.Healthy() {
 		t.Fatal("state changed back with no probe observation")
+	}
+}
+
+// TestADR0017ProberLogsStateChange covers the transition rule: a state line is
+// written once per belief change and not while the belief is unchanged, from
+// both the cadence loop and the on-demand probe (ADR-0017).
+func TestADR0017ProberLogsStateChange(t *testing.T) {
+	h := NewHealth()
+	log := &syncBuffer{}
+	var mu sync.Mutex
+	ready := false
+
+	pr := &Prober{
+		health:   h,
+		interval: 5 * time.Millisecond,
+		logger:   NewLogger(log),
+		probeFn: func(context.Context) bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return ready
+		},
+	}
+	defer pr.Close()
+
+	pr.RequestStarted()
+	// The belief starts not healthy and every probe says not ready, so no
+	// transition happens and nothing is logged.
+	time.Sleep(30 * time.Millisecond)
+	if got := healthLineCount(log.String()); got != 0 {
+		t.Fatalf("logged %d health lines while the state was unchanged, want 0:\n%s", got, log.String())
+	}
+
+	mu.Lock()
+	ready = true
+	mu.Unlock()
+	waitFor(t, "healthy transition line", func() bool { return healthLineCount(log.String()) == 1 })
+	if !strings.Contains(log.String(), "health state=healthy") {
+		t.Fatalf("no healthy line:\n%s", log.String())
+	}
+	pr.RequestDone()
+
+	// The on-demand probe (FR-19) logs the reverse transition.
+	mu.Lock()
+	ready = false
+	mu.Unlock()
+	if pr.ProbeNow(context.Background()) {
+		t.Fatal("ProbeNow reported ready for a not-ready probe")
+	}
+	if got := healthLineCount(log.String()); got != 2 {
+		t.Fatalf("logged %d health lines after the reverse transition, want 2:\n%s", got, log.String())
+	}
+	if !strings.Contains(log.String(), "health state=unhealthy") {
+		t.Fatalf("no unhealthy line:\n%s", log.String())
 	}
 }

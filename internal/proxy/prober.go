@@ -18,6 +18,9 @@ type Prober struct {
 	// probeFn is the observation. It is a field so tests can replace the HTTP
 	// probe with a stub; NewProber installs the real one.
 	probeFn func(context.Context) bool
+	// logger records a health-state transition (ADR-0017). It may be nil, in
+	// which case transitions are not logged (test stubs).
+	logger *Logger
 
 	mu      sync.Mutex
 	pending int
@@ -26,12 +29,14 @@ type Prober struct {
 }
 
 // NewProber returns a Prober that polls cfg.TargetAddress cfg.HealthPath every
-// cfg.ProbeInterval with cfg.ProbeTimeout, writing the result to health.
-func NewProber(cfg *config.Config, health *Health) *Prober {
+// cfg.ProbeInterval with cfg.ProbeTimeout, writing the result to health and
+// logging each belief change to logger (ADR-0017).
+func NewProber(cfg *config.Config, health *Health, logger *Logger) *Prober {
 	return &Prober{
 		health:   health,
 		interval: cfg.ProbeInterval,
 		probeFn:  httpProbe(cfg.TargetAddress, cfg.HealthPath, cfg.ProbeTimeout),
+		logger:   logger,
 	}
 }
 
@@ -64,8 +69,17 @@ func (pr *Prober) RequestDone() {
 // not start the cadence loop.
 func (pr *Prober) ProbeNow(ctx context.Context) bool {
 	ready := pr.probeFn(ctx)
-	pr.health.observe(ready)
+	pr.record(ready)
 	return ready
+}
+
+// record observes a probe result and logs it when the belief changes, so a
+// state-change line is written once per transition, not once per probe
+// (ADR-0017). A nil logger is a test stub that does not log.
+func (pr *Prober) record(ready bool) {
+	if pr.health.observe(ready) && pr.logger != nil {
+		pr.logger.Health(ready)
+	}
 }
 
 // Close stops the cadence loop and releases its goroutine. It is idempotent
@@ -115,14 +129,14 @@ func (pr *Prober) loop(stop chan struct{}) {
 		default:
 		}
 
-		if pr.probeFn(context.Background()) {
-			pr.health.observe(true)
+		ready := pr.probeFn(context.Background())
+		pr.record(ready)
+		if ready {
 			pr.mu.Lock()
 			pr.finishLocked()
 			pr.mu.Unlock()
 			return
 		}
-		pr.health.observe(false)
 
 		select {
 		case <-stop:

@@ -61,3 +61,17 @@ func (l *Logger) Error(status int, detail errorDetail) {
 	fmt.Fprintf(l.out, "%s error status=%d component=%s message=%q\n",
 		time.Now().UTC().Format(time.RFC3339), status, detail.Component, detail.Message)
 }
+
+// Health writes one line for one target health-state transition (ADR-0017). It
+// carries a timestamp and the new state, is greppable, and writes no request or
+// response content. It is called only when the belief actually changes, so the
+// count of these lines is the number of transitions, not the number of probes.
+func (l *Logger) Health(healthy bool) {
+	state := "unhealthy"
+	if healthy {
+		state = "healthy"
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	fmt.Fprintf(l.out, "%s health state=%s\n", time.Now().UTC().Format(time.RFC3339), state)
+}
