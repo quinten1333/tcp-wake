@@ -218,7 +218,7 @@ func TestADR0014ErrorBodySchema(t *testing.T) {
 		pr := stubProber(health, time.Hour, func(context.Context) bool { return false })
 		defer pr.Close()
 		pl := NewPipeline(context.Background(), time.Hour, health, pr, wakeStub(t),
-			testForwarder(t, "http://"+closedAddr(t)), NewLogger(io.Discard))
+			testForwarder(t, "http://"+postConnectFailureTarget(t)), NewLogger(io.Discard))
 		p, counter := countingPending(t)
 
 		runHandle(t, pl, p)
@@ -307,7 +307,7 @@ func TestNFR6ExactlyOneResponsePerAcceptedRequest(t *testing.T) {
 			pr := stubProber(health, time.Hour, func(context.Context) bool { return false })
 			t.Cleanup(pr.Close)
 			return NewPipeline(context.Background(), time.Hour, health, pr, wakeStub(t),
-				testForwarder(t, "http://"+closedAddr(t)), NewLogger(io.Discard))
+				testForwarder(t, "http://"+postConnectFailureTarget(t)), NewLogger(io.Discard))
 		}},
 		{"relayed target response", func(t *testing.T) *Pipeline {
 			addr := rawTarget(t, func(c net.Conn) {

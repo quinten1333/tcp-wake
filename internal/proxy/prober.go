@@ -82,6 +82,14 @@ func (pr *Prober) record(ready bool) {
 	}
 }
 
+// Observe records a health observation made outside the probe loop, such as the
+// outcome of the request path's own connection attempt (ADR-0018), and logs a
+// transition. It is the same seam the probes use, so the belief has one writer
+// and one log line per change however it was observed.
+func (pr *Prober) Observe(ready bool) {
+	pr.record(ready)
+}
+
 // Close stops the cadence loop and releases its goroutine. It is idempotent
 // and safe to call while the loop is probing.
 func (pr *Prober) Close() {

@@ -39,7 +39,7 @@ func main() {
 	prober := proxy.NewProber(cfg, health, logger)
 	defer prober.Close()
 	wake := proxy.NewWakeTrigger(cfg)
-	forward, err := proxy.NewForwarder(cfg.TargetAddress)
+	forward, err := proxy.NewForwarder(cfg.TargetAddress, cfg.ProbeTimeout)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

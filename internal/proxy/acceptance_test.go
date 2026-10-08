@@ -52,8 +52,8 @@ func TestFR9NoWakeForTrafficNotBoundForHypha(t *testing.T) {
 
 	// Another vhost: a server the system was never configured to sit in front
 	// of. A request to it must not touch the system's wake path.
-	other := newFakeTarget(t, "/health")
-	conn, err := net.Dial("tcp", other.addr())
+	other := rawTarget(t, func(c net.Conn) { io.Copy(io.Discard, c) })
+	conn, err := net.Dial("tcp", other)
 	if err != nil {
 		t.Fatalf("dial other vhost: %v", err)
 	}
@@ -249,4 +249,93 @@ func TestNFR8NoPrivilegeEscalationInSource(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestADR0018ReachableTargetForwardsWithoutWaking is the behaviour ADR-0018
+// introduces: the belief starts not healthy (a fresh process), but a request is
+// answered by trying the target first, so no wake runs when it is already up.
+func TestADR0018ReachableTargetForwardsWithoutWaking(t *testing.T) {
+	s := newSystem(t, systemOptions{})
+	s.target.setReady(true) // the target is already on
+	if s.health.Healthy() {
+		t.Fatal("setup: a fresh system must start not healthy")
+	}
+
+	conn := s.send()
+	data := readAll(t, conn)
+	if len(data) == 0 {
+		t.Fatal("a reachable target produced no response")
+	}
+	if got := s.wakeExecutions(); got != 0 {
+		t.Fatalf("wake command ran %d time(s) though the target was reachable, want 0 (ADR-0018)", got)
+	}
+	if got := s.wakeLogLines(); got != 0 {
+		t.Fatalf("wrote %d wake lines though the target was reachable, want 0", got)
+	}
+	if !s.health.Healthy() {
+		t.Fatal("the successful attempt did not set the belief healthy")
+	}
+	if !strings.Contains(s.log.String(), "health state=healthy") {
+		t.Fatalf("no healthy transition line was logged:\n%s", s.log.String())
+	}
+}
+
+// TestADR0018UnreachableTargetHeldAndWoken covers the other half: a request to
+// an off target is held, wakes it exactly once, and forwards once it is up.
+func TestADR0018UnreachableTargetHeldAndWoken(t *testing.T) {
+	s := newSystem(t, systemOptions{waitBound: time.Hour})
+
+	conn := s.send()
+	s.waitHeld(1)
+	if got := s.target.forwardConns(); got != 0 {
+		t.Fatalf("target saw %d forwards while it was off, want 0", got)
+	}
+	waitFor(t, "one wake line", func() bool { return s.wakeLogLines() == 1 })
+
+	s.target.setReady(true)
+	data := readAll(t, conn)
+	if len(data) == 0 {
+		t.Fatal("no response after the target became reachable")
+	}
+	if got := s.wakeLogLines(); got != 1 {
+		t.Fatalf("wake lines = %d, want exactly 1", got)
+	}
+	if got := s.target.forwardConns(); got != 1 {
+		t.Fatalf("target forwards = %d, want 1", got)
+	}
+}
+
+// TestADR0018OutOfBandShutdownWakesInsteadOf502 covers the accepted risk R-8
+// that ADR-0018 removes: a target that goes off after the belief became healthy
+// no longer gives the request a 502; it is held and woken, and the belief logs
+// the healthy-to-unhealthy transition.
+func TestADR0018OutOfBandShutdownWakesInsteadOf502(t *testing.T) {
+	s := newSystem(t, systemOptions{waitBound: time.Hour})
+
+	// First request while the target is up: forwarded, belief healthy.
+	s.target.setReady(true)
+	first := s.send()
+	readAll(t, first)
+	if !s.health.Healthy() {
+		t.Fatal("setup: the first request did not set the belief healthy")
+	}
+
+	// The target goes off out-of-band.
+	s.target.setReady(false)
+
+	// The next request must not 502: it is held and woken.
+	second := s.send()
+	s.waitHeld(1)
+	waitFor(t, "unhealthy transition line", func() bool {
+		return strings.Contains(s.log.String(), "health state=unhealthy")
+	})
+	if got := errorLineCount(s.log.String()); got != 0 {
+		t.Fatalf("wrote %d error lines after an out-of-band shutdown, want 0 (R-8 removed)", got)
+	}
+
+	s.target.setReady(true)
+	data := readAll(t, second)
+	if len(data) == 0 {
+		t.Fatal("the held request was not forwarded after the target came back")
+	}
 }

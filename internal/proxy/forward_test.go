@@ -11,7 +11,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -45,24 +44,20 @@ func rawTarget(t *testing.T, serve func(net.Conn)) string {
 // testForwarder builds a Forwarder for a live or deliberately dead target.
 func testForwarder(t *testing.T, targetAddress string) *Forwarder {
 	t.Helper()
-	f, err := NewForwarder(targetAddress)
+	f, err := NewForwarder(targetAddress, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return f
 }
 
-// closedAddr returns a loopback address nothing listens on, for the transport
-// failure tests.
-func closedAddr(t *testing.T) string {
+// postConnectFailureTarget accepts a connection and closes it without a
+// response, so Forward fails after the connection was established. That is the
+// FR-18 transport failure now that an unreachable target holds and wakes
+// (ADR-0018).
+func postConnectFailureTarget(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
-	return addr
+	return rawTarget(t, func(c net.Conn) {})
 }
 
 // runForward drives Forward while a goroutine reads the client side (net.Pipe is
@@ -292,71 +287,31 @@ func TestFR1HealthyRequestForwarded(t *testing.T) {
 	}
 }
 
-// bootWindowTarget records when each upstream connection is accepted and answers
-// each request with resp.
-func bootWindowTarget(t *testing.T, want, resp string) (addr string, accepted func() []time.Time) {
-	t.Helper()
-	var mu sync.Mutex
-	var times []time.Time
-	addr = rawTarget(t, func(c net.Conn) {
-		mu.Lock()
-		times = append(times, time.Now())
-		mu.Unlock()
-		readRequest(c, want)
-		io.WriteString(c, resp)
-	})
-	return addr, func() []time.Time {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]time.Time(nil), times...)
-	}
-}
-
-// holdAndServe creates n held requests through the listener and returns the
-// connections so the caller can flip health and read the responses.
-func holdAndServe(t *testing.T, l *Listener, addr string, n int) []net.Conn {
-	t.Helper()
-	conns := make([]net.Conn, 0, n)
-	for i := 0; i < n; i++ {
-		conns = append(conns, get(t, addr))
-	}
-	waitFor(t, "all requests held", func() bool { return l.heldCount() == n })
-	return conns
-}
-
 // TestFR4AndFR5AllHeldRequestsForwardInParallel covers FR-4 and FR-5: three
-// requests held during one boot window all forward once healthy, each on its own
-// upstream connection, opened within 100 ms of each other.
+// requests held while the target is off all forward once it becomes reachable,
+// each on its own upstream connection, opened within 100 ms of each other.
 func TestFR4AndFR5AllHeldRequestsForwardInParallel(t *testing.T) {
-	const req = "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
-	const resp = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
-	addr, accepted := bootWindowTarget(t, req, resp)
-
-	health := NewHealth()
-	prober, boot := bootingProber(t, health, 5*time.Millisecond)
-	pl := NewPipeline(context.Background(), time.Hour, health,
-		prober, wakeStub(t), testForwarder(t, "http://"+addr), NewLogger(io.Discard))
-	l, laddr := startListener(t, testConfig(), pl.Handle)
+	s := newSystem(t, systemOptions{waitBound: time.Hour})
 
 	const n = 3
-	conns := holdAndServe(t, l, laddr, n)
+	conns := s.hold(n)
+	s.waitHeld(n)
+	if got := s.target.forwardConns(); got != 0 {
+		t.Fatalf("target saw %d forwards while it was off, want 0", got)
+	}
 
-	boot() // the boot finishes; the prober's next probe observes ready
+	s.target.setReady(true) // the target finishes booting
 
 	for _, c := range conns {
-		defer c.Close()
-		if err := c.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
-			t.Fatal(err)
-		}
-		data, _ := io.ReadAll(c)
-		if string(data) != resp {
-			t.Fatalf("client received %q, want %q", data, resp)
+		data := readAll(t, c)
+		if len(data) == 0 {
+			t.Fatal("a released request received no response")
 		}
 	}
 
-	times := accepted()
+	times := s.target.forwardTimesCopy()
 	if len(times) != n {
-		t.Fatalf("target accepted %d connections, want %d", len(times), n)
+		t.Fatalf("target accepted %d forwarded connections, want %d", len(times), n)
 	}
 	span := times[len(times)-1].Sub(times[0])
 	if span >= 100*time.Millisecond {
@@ -365,30 +320,25 @@ func TestFR4AndFR5AllHeldRequestsForwardInParallel(t *testing.T) {
 }
 
 // TestNFR5EightConcurrentAllGetResponse covers NFR-5: eight concurrent requests
-// during one boot window are all held without being discarded and all receive
-// the target's response.
+// while the target is off are all held without being discarded and all receive
+// the target's response once it is reachable.
 func TestNFR5EightConcurrentAllGetResponse(t *testing.T) {
-	const req = "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
-	const resp = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
-	addr, _ := bootWindowTarget(t, req, resp)
-
-	health := NewHealth()
-	prober, boot := bootingProber(t, health, 5*time.Millisecond)
-	pl := NewPipeline(context.Background(), time.Hour, health,
-		prober, wakeStub(t), testForwarder(t, "http://"+addr), NewLogger(io.Discard))
-	l, laddr := startListener(t, testConfig(), pl.Handle)
+	s := newSystem(t, systemOptions{waitBound: time.Hour})
 
 	const n = 8
-	conns := holdAndServe(t, l, laddr, n)
-	boot()
+	conns := s.hold(n)
+	s.waitHeld(n)
+
+	s.target.setReady(true)
 
 	for _, c := range conns {
-		defer c.Close()
-		c.SetReadDeadline(time.Now().Add(3 * time.Second))
-		data, _ := io.ReadAll(c)
-		if string(data) != resp {
-			t.Fatalf("client received %q, want %q", data, resp)
+		data := readAll(t, c)
+		if len(data) == 0 {
+			t.Fatal("a released request received no response")
 		}
+	}
+	if got := s.target.forwardConns(); got != n {
+		t.Fatalf("target accepted %d forwards, want %d", got, n)
 	}
 }
 
@@ -398,7 +348,7 @@ func TestFR18TransportFailureGives502(t *testing.T) {
 	health := NewHealth()
 	health.observe(true)
 	pl := NewPipeline(context.Background(), time.Hour, health,
-		notReadyProber(t, health), wakeStub(t), testForwarder(t, "http://"+closedAddr(t)), NewLogger(io.Discard))
+		notReadyProber(t, health), wakeStub(t), testForwarder(t, "http://"+postConnectFailureTarget(t)), NewLogger(io.Discard))
 
 	p, client := newPipePending(t)
 	h := startHandle(pl, p, client)
@@ -427,7 +377,7 @@ func TestFR19TransportFailureTriggersProbe(t *testing.T) {
 	t.Cleanup(prober.Close)
 
 	pl := NewPipeline(context.Background(), time.Hour, health,
-		prober, wakeStub(t), testForwarder(t, "http://"+closedAddr(t)), NewLogger(io.Discard))
+		prober, wakeStub(t), testForwarder(t, "http://"+postConnectFailureTarget(t)), NewLogger(io.Discard))
 
 	p, client := newPipePending(t)
 	h := startHandle(pl, p, client)
@@ -442,16 +392,18 @@ func TestFR19TransportFailureTriggersProbe(t *testing.T) {
 	}
 }
 
-// TestForwardNoTimeoutInSource keeps §8.5's "no connection timeout of its own"
-// true for the forward path: no dial timeout and no deadline.
-func TestForwardNoTimeoutInSource(t *testing.T) {
+// TestForwardNoClientDeadlineInSource keeps NFR-4 true for the forward path: the
+// held client connection gets no read or write deadline. The upstream connect is
+// deliberately bounded by the configured probe timeout, so DialTimeout is
+// allowed (ADR-0018).
+func TestForwardNoClientDeadlineInSource(t *testing.T) {
 	data, err := os.ReadFile("forward.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, banned := range []string{"DialTimeout", "SetDeadline", "SetReadDeadline", "SetWriteDeadline"} {
+	for _, banned := range []string{"SetDeadline", "SetReadDeadline", "SetWriteDeadline"} {
 		if bytes.Contains(data, []byte(banned)) {
-			t.Errorf("forward.go contains %s, which §8.5 forbids", banned)
+			t.Errorf("forward.go contains %s, which NFR-4 forbids on the client connection", banned)
 		}
 	}
 }

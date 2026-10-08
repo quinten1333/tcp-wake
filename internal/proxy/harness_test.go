@@ -33,52 +33,67 @@ const (
 		`{"error":{"message":""}}`
 )
 
-// fakeTarget is a controllable HTTP target that answers the health path from
-// its ready flag and every other path with its configured response, recording
-// each forwarded request. It can be started (newFakeTarget), made ready or not
-// ready, given a custom forward response, and stopped (stop).
+// fakeTarget is a controllable HTTP target. Reachability and readiness are the
+// same thing here, as they are in the deployment (C-5, ADR-0018): when it is
+// ready it listens and answers, and when it is not it does not listen at all,
+// so a connect attempt is refused. It answers the health path with the ready
+// body and every other path with its configured forward response, recording
+// each forwarded request.
 type fakeTarget struct {
 	t          *testing.T
 	healthPath string
-	ln         net.Listener
+	listAddr   string
 
 	mu           sync.Mutex
 	ready        bool
 	stopped      bool
+	ln           net.Listener
 	forwardResp  string
 	forward      func(c net.Conn, req string)
 	got          []string
 	forwardCount int
+	forwardTimes []time.Time
 }
 
-// newFakeTarget starts a fake target on an ephemeral loopback port. healthPath
-// is the path that answers readiness rather than a forwarded response.
+// newFakeTarget picks an ephemeral loopback port but does not bind it, so the
+// target starts off: a connect attempt is refused until setReady(true). This is
+// what lets the harness model a powered-off host (ADR-0018).
 func newFakeTarget(t *testing.T, healthPath string) *fakeTarget {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	addr := probe.Addr().String()
+	probe.Close()
 	ft := &fakeTarget{
 		t:           t,
 		healthPath:  healthPath,
-		ln:          ln,
+		listAddr:    addr,
 		forwardResp: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
 	}
-	go ft.acceptLoop()
 	t.Cleanup(ft.stop)
 	return ft
 }
 
-func (ft *fakeTarget) addr() string { return ft.ln.Addr().String() }
+func (ft *fakeTarget) addr() string { return ft.listAddr }
 
-func (ft *fakeTarget) url() string { return "http://" + ft.addr() }
+func (ft *fakeTarget) url() string { return "http://" + ft.listAddr }
 
-// setReady controls what the health path answers: the ready body or a 503.
+// setReady turns the target on or off. On means it listens and answers ready;
+// off means the port is closed, so a connect attempt is refused (ADR-0018).
 func (ft *fakeTarget) setReady(ready bool) {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
+	if ready == ft.ready {
+		return
+	}
 	ft.ready = ready
+	if ready {
+		ft.startLocked()
+	} else {
+		ft.stopLocked()
+	}
 }
 
 // setForwardResponse sets the response every forwarded request receives.
@@ -99,13 +114,29 @@ func (ft *fakeTarget) setForwardHandler(fn func(c net.Conn, req string)) {
 // stop closes the listener. It is idempotent and also runs on test cleanup.
 func (ft *fakeTarget) stop() {
 	ft.mu.Lock()
+	defer ft.mu.Unlock()
 	if ft.stopped {
-		ft.mu.Unlock()
 		return
 	}
 	ft.stopped = true
-	ft.mu.Unlock()
-	ft.ln.Close()
+	ft.ready = false
+	ft.stopLocked()
+}
+
+func (ft *fakeTarget) startLocked() {
+	ln, err := net.Listen("tcp", ft.listAddr)
+	if err != nil {
+		ft.t.Fatalf("fake target cannot listen on %s: %v", ft.listAddr, err)
+	}
+	ft.ln = ln
+	go ft.acceptLoop(ln)
+}
+
+func (ft *fakeTarget) stopLocked() {
+	if ft.ln != nil {
+		ft.ln.Close()
+		ft.ln = nil
+	}
 }
 
 // requests returns a copy of every request the target received on a non-health
@@ -124,9 +155,17 @@ func (ft *fakeTarget) forwardConns() int {
 	return ft.forwardCount
 }
 
-func (ft *fakeTarget) acceptLoop() {
+// forwardTimesCopy returns when each forwarded request arrived, for the
+// parallel-release check (FR-5).
+func (ft *fakeTarget) forwardTimesCopy() []time.Time {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	return append([]time.Time(nil), ft.forwardTimes...)
+}
+
+func (ft *fakeTarget) acceptLoop(ln net.Listener) {
 	for {
-		c, err := ft.ln.Accept()
+		c, err := ln.Accept()
 		if err != nil {
 			return
 		}
@@ -157,6 +196,7 @@ func (ft *fakeTarget) serve(c net.Conn) {
 	ft.mu.Lock()
 	ft.got = append(ft.got, req)
 	ft.forwardCount++
+	ft.forwardTimes = append(ft.forwardTimes, time.Now())
 	resp := ft.forwardResp
 	fn := ft.forward
 	ft.mu.Unlock()
@@ -268,7 +308,7 @@ func startSystem(t *testing.T, cfg *config.Config, target *fakeTarget, wakeRec, 
 	logger := NewLogger(log)
 	health := NewHealth()
 	prober := NewProber(cfg, health, logger)
-	forwarder, err := NewForwarder(cfg.TargetAddress)
+	forwarder, err := NewForwarder(cfg.TargetAddress, cfg.ProbeTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}

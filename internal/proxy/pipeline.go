@@ -41,48 +41,65 @@ func NewPipeline(ctx context.Context, waitBound time.Duration, health *Health, p
 	}
 }
 
-// Handle runs one retained request. A request received while the target is not
-// healthy triggers its own wake-command execution (FR-3); a failed execution
-// gives that request's client an immediate 500 naming the wake command (FR-17)
-// and never reaches the probe or the hold. Otherwise the probe starts and the
-// request holds under the wait bound.
+// Handle runs one retained request. It assumes the target is up: it first tries
+// to connect and forward, with the connect bounded by the configured probe
+// timeout (ADR-0018). Only when the connection cannot be established is the
+// target treated as off — its state becomes unhealthy, the request is held, and
+// the wake command runs once for this request (FR-3). A failed wake gives that
+// client an immediate 500 naming the wake command (FR-17). A failure after the
+// connection was established is the FR-18 502.
 func (pl *Pipeline) Handle(p *Pending) {
-	if !pl.health.Healthy() {
-		res := pl.wake.Run(pl.ctx)
-		pl.logger.Wake(pl.wake.Command(), res)
-		if res.Err != nil {
-			// A wake interrupted by shutdown is not a wake failure: the process
-			// is going away, and FR-16/§6.8 say a held client gets no response.
-			if pl.ctx.Err() != nil {
-				return
-			}
-			pl.writeAndLog(p.Conn, http.StatusInternalServerError, errorDetail{
-				Message:   fmt.Sprintf("wake command %q failed: %v", pl.wake.Command(), res.Err),
-				Component: componentWakeCommand,
-			})
+	if err := pl.forward.Forward(p); err == nil {
+		// The target was reachable and answered; record the positive
+		// observation so a stale not-healthy belief is corrected and logged.
+		pl.prober.Observe(true)
+		return
+	} else if !errors.Is(err, ErrTargetUnreachable) {
+		// The connection was established but the exchange failed. A probe
+		// repairs the belief rather than inferring it from the failure's cause
+		// (FR-18, FR-19, ADR-0008).
+		pl.writeAndLog(p.Conn, http.StatusBadGateway, errorDetail{
+			Message:   fmt.Sprintf("forward to target %s failed: %v", pl.forward.Address(), err),
+			Component: componentTarget,
+		})
+		pl.prober.ProbeNow(pl.ctx)
+		return
+	}
+
+	// The target is off: mark it unhealthy, wake it, and hold.
+	pl.prober.Observe(false)
+	res := pl.wake.Run(pl.ctx)
+	pl.logger.Wake(pl.wake.Command(), res)
+	if res.Err != nil {
+		// A wake interrupted by shutdown is not a wake failure: the process is
+		// going away, and FR-16/§6.8 say a held client gets no response.
+		if pl.ctx.Err() != nil {
 			return
 		}
+		pl.writeAndLog(p.Conn, http.StatusInternalServerError, errorDetail{
+			Message:   fmt.Sprintf("wake command %q failed: %v", pl.wake.Command(), res.Err),
+			Component: componentWakeCommand,
+		})
+		return
 	}
 
 	pl.prober.RequestStarted()
 	defer pl.prober.RequestDone()
 
-	// The deadline is anchored to the request's arrival and computed once, so a
-	// wake attempt cannot restart or extend it (FR-8). It derives from the
-	// process context, so a healthy observation wins even at the boundary and
+	// The deadline is anchored to the request's arrival and computed once, so the
+	// failed connect attempt cannot restart or extend it (FR-8). It derives from
+	// the process context, so a healthy observation wins even at the boundary and
 	// a shutdown cancels the wait.
 	waitCtx, cancel := context.WithDeadline(pl.ctx, p.Arrival.Add(pl.waitBound))
 	defer cancel()
 
 	if pl.health.WaitHealthyOr(waitCtx, p.Discarded()) {
-		// The target is believed healthy: forward on this request's own
-		// upstream connection (FR-4). A request that arrived healthy reaches
-		// here with no wake and no wait (FR-1). A transport-level failure is
-		// the only case a forward can answer, and it also repairs the belief by
-		// a probe rather than by inference (FR-18, FR-19, ADR-0008).
+		// The target is healthy: forward on this request's own upstream
+		// connection (FR-4). A failure now is the post-wake transport failure
+		// (FR-18), and the probe repairs the belief (FR-19).
 		if err := pl.forward.Forward(p); err != nil {
 			pl.writeAndLog(p.Conn, http.StatusBadGateway, errorDetail{
-				Message:   fmt.Sprintf("target %s is unreachable: %v", pl.forward.Address(), err),
+				Message:   fmt.Sprintf("forward to target %s failed: %v", pl.forward.Address(), err),
 				Component: componentTarget,
 			})
 			pl.prober.ProbeNow(pl.ctx)

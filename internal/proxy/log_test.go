@@ -122,7 +122,7 @@ func TestADR0010OneWakeAndOneErrorLine(t *testing.T) {
 				pr := stubProber(health, time.Hour, func(context.Context) bool { return false })
 				t.Cleanup(pr.Close)
 				return NewPipeline(context.Background(), time.Hour, health, pr, wakeStub(t),
-					testForwarder(t, "http://"+closedAddr(t)), NewLogger(log))
+					testForwarder(t, "http://"+postConnectFailureTarget(t)), NewLogger(log))
 			},
 			0, 1,
 		},
@@ -221,7 +221,7 @@ func TestLoggerNoRequestOrResponseContent(t *testing.T) {
 		pr := stubProber(health, time.Hour, func(context.Context) bool { return false })
 		defer pr.Close()
 		pl := NewPipeline(context.Background(), time.Hour, health, pr, wakeStub(t),
-			testForwarder(t, "http://"+closedAddr(t)), NewLogger(log))
+			testForwarder(t, "http://"+postConnectFailureTarget(t)), NewLogger(log))
 
 		p, _ := countingPendingRaw(t, req)
 		runHandle(t, pl, p)

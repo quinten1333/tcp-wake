@@ -2,29 +2,41 @@ package proxy
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/url"
+	"time"
 )
+
+// ErrTargetUnreachable means the upstream connection could not be established
+// at all. The request path treats it as "the target is off": it marks the
+// target unhealthy, holds the request, and wakes it, rather than answering an
+// error (ADR-0018). Any other Forward error is a transport failure after the
+// connection was established, which is the FR-18 502.
+var ErrTargetUnreachable = errors.New("proxy: target unreachable")
 
 // Forwarder sends a held request's exact bytes to the configured target over
 // plain HTTP and relays the response back unchanged and streamed (IF-2, FR-13,
 // FR-14, FR-15). It is a transparent TCP relay: the retained wire bytes are
 // written as they are, and the response is relayed with its framing tracked
 // only to know where it ends, so nothing is re-serialised and byte-exactness is
-// a property of the copy (ADR-0004). It applies no deadline of its own: the
-// spec puts connection timeouts on the routing layer and the origin, not on
-// this system (§8.5, §2 non-goal 7).
+// a property of the copy (ADR-0004).
+//
+// The upstream connect is bounded by dialTimeout so an unreachable target is
+// detected quickly rather than hanging the request; the held client connection
+// still gets no deadline of any kind (NFR-4, ADR-0018).
 type Forwarder struct {
-	target *url.URL
-	host   string
+	target      *url.URL
+	host        string
+	dialTimeout time.Duration
 }
 
 // NewForwarder parses target_address (for example "http://hypha.lan:8080") and
-// returns a Forwarder that dials its host. An unparseable address or one with
-// no host is a start-time failure, not a per-request 502.
-func NewForwarder(targetAddress string) (*Forwarder, error) {
+// returns a Forwarder that dials its host within dialTimeout. An unparseable
+// address or one with no host is a start-time failure, not a per-request 502.
+func NewForwarder(targetAddress string, dialTimeout time.Duration) (*Forwarder, error) {
 	u, err := url.Parse(targetAddress)
 	if err != nil {
 		return nil, fmt.Errorf("proxy: invalid target_address %q: %w", targetAddress, err)
@@ -32,7 +44,7 @@ func NewForwarder(targetAddress string) (*Forwarder, error) {
 	if u.Host == "" {
 		return nil, fmt.Errorf("proxy: target_address %q has no host", targetAddress)
 	}
-	return &Forwarder{target: u, host: u.Host}, nil
+	return &Forwarder{target: u, host: u.Host, dialTimeout: dialTimeout}, nil
 }
 
 // Address returns the configured target, for the error body that names it
@@ -43,15 +55,18 @@ func (f *Forwarder) Address() string {
 
 // Forward opens one upstream connection for this request, writes the retained
 // bytes verbatim, and relays the response. Every held request calls this on its
-// own, so none waits for another (FR-5). It returns an error only if it fails
-// before writing any byte to the client, which is the one case where the caller
-// can still produce the FR-18 502. Once the response head is on the wire the
-// request already has its single response (NFR-6), so later failures just close
-// the connection.
+// own, so none waits for another (FR-5).
+//
+// A failure to establish the connection returns an error wrapping
+// ErrTargetUnreachable, before any client byte is written. A failure after the
+// connection is established returns a different error and is also safe to
+// answer with the FR-18 502. Once the response head is on the wire the request
+// already has its single response (NFR-6), so later failures just close the
+// connection and return nil.
 func (f *Forwarder) Forward(p *Pending) error {
-	upstream, err := net.Dial("tcp", f.host)
+	upstream, err := net.DialTimeout("tcp", f.host, f.dialTimeout)
 	if err != nil {
-		return fmt.Errorf("forward: dial %s: %w", f.host, err)
+		return fmt.Errorf("%w: dial %s: %w", ErrTargetUnreachable, f.host, err)
 	}
 	defer upstream.Close()
 
