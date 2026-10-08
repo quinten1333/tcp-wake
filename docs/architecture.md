@@ -1,7 +1,7 @@
 # Architecture — tcp-wake
 
-> Conforms to: `specs/SRS.md` baseline v0.1 (traceability: `specs/DECISION_MAP.md`).
-> All 13 ADRs (§9) are `accepted`. Every design assertion below cites its ADR.
+> Conforms to: `specs/SRS.md` baseline v0.2 (traceability: `specs/DECISION_MAP.md`).
+> 16 ADRs (§9): 15 `accepted`, and ADR-0005 `superseded by ADR-0016`. Every design assertion below cites its ADR.
 > One thing the requirements force with no alternative, and which is therefore not an ADR: all state is in-memory and dies with the process, because §2 non-goal 5 puts holding requests across a restart out of scope.
 
 ## 1. Introduction and Goals
@@ -14,7 +14,7 @@
   3. **Reliability** — exactly one response per accepted request whose client stays connected (NFR-6).
   4. **Security** — only the wake command runs with elevated privileges (NFR-7, NFR-8).
   5. **Availability** — hypha stays off while nothing is pending (G4, via FR-12).
-- **Baseline**: SRS `specs/SRS.md` v0.1, reviewed and confirmed by the user. Change control: any change to an ADR or a section requires an impact assessment and a re-run of the traceability check on the affected requirements and ADRs.
+- **Baseline**: SRS `specs/SRS.md` v0.2, reviewed and confirmed by the user. Change control: any change to an ADR or a section requires an impact assessment and a re-run of the traceability check on the affected requirements and ADRs.
 
 ## 2. Constraints
 
@@ -22,8 +22,8 @@
 |---|---|---|
 | C-1 — hyperion is the only always-on host; hypha is normally off | ADR-0002 (one route among many), ADR-0003 (deployed like everything else on hyperion) | The system becomes a second always-on dependency to keep alive |
 | C-2 — hypha's boot time is ≈20 s | ADR-0007 (≈3 s detection inside a 120 s budget) | A slower boot erodes NFR-1's margin (R-2) |
-| C-3 — hyperion has no login path to hypha | ADR-0002, ADR-0005 (the only privileged action is a wake, never a session) | Any credential on hyperion would widen the trust boundary |
-| C-4 — the wake command needs elevated privileges | ADR-0005 (setuid command), ADR-0003 (container must preserve the bit) | The wake path silently breaks (R-1) |
+| C-3 — hyperion has no login path to hypha | ADR-0002, ADR-0016 (the only privileged action is a wake, never a session) | Any credential on hyperion would widen the trust boundary |
+| C-4 — the wake command needs elevated privileges | ADR-0016 (etherwake with CAP_NET_RAW), ADR-0003 (container must preserve the capability) | The wake path silently breaks (R-1) |
 | C-5 — llama-server in router mode answers health before a model loads | ADR-0007 (the probe is the only health signal) | A model-load wait would enter the hold window, which non-goal 2 forbids |
 | §2 accepted risk — hypha's own idle-shutdown can race the wake path | Nothing; explicitly accepted, not mitigated | A shutdown during a hold is indistinguishable from a slow boot (R-3) |
 
@@ -47,13 +47,13 @@
                                                                            │
                                         Ch-3: health probe (GET /health)   │
                                         Ch-4: forward (held, verbatim)     │
-                                        Ch-5: exec wake command            │
+                                        Ch-5: exec etherwake               │
                                                                            ▼
                                                     ┌──────────────────────────────────┐
                                                     │ hypha (normally off)             │
                                                     │  /health = readiness (C-5)       │
                                                     └──────────────────────────────────┘
-                                                    wake command: on hyperion, setuid-root
+                                                    etherwake: in the container, cap_net_raw
 ```
 
 - **External interfaces**:
@@ -64,7 +64,7 @@
 | Ch-2 routing | existing routing ↔ system | the hypha-bound route | TCP, plain HTTP (ADR-0006) | a request for another service never arrives (FR-9) |
 | Ch-3 probe | system ↔ hypha `/health` | synthetic `GET /health` out; status and body in | HTTP; 200 + `{"status":"ok"}` is ready (IF-3) | not ready, state stays or becomes not healthy (FR-11) |
 | Ch-4 forward | system ↔ hypha | held bytes out; response bytes in | HTTP over TCP, one connection per held request (FR-5) | 502 to that client, then a probe (FR-18, FR-19) |
-| Ch-5 wake | system ↔ wake command | one exec per triggering request; exit status back | process execution, setuid-root command (ADR-0005) | 500 to that client immediately (FR-17) |
+| Ch-5 wake | system ↔ etherwake | one exec per triggering request; exit status back | process execution, etherwake with CAP_NET_RAW (ADR-0016) | 500 to that client immediately (FR-17) |
 
 ## 4. Solution Strategy
 
@@ -75,13 +75,13 @@
   - **Health state** — the belief, healthy or not healthy, changed only by an observation (ADR-0008).
   - **Held set** — the requests currently held, one goroutine each (ADR-0001, ADR-0004).
   - **Wait-bound timer** — per request, measured from arrival (FR-8).
-  - **Wake trigger** — execs the configured command, once per triggering request (ADR-0005).
+  - **Wake trigger** — execs etherwake, once per triggering request (ADR-0016).
   - **Probe** — polls `/health` while a request is pending, and once after a transport failure (ADR-0007, ADR-0008).
   - **Forwarder** — sends held bytes verbatim, relays the response back, streaming (ADR-0004).
   - **Config loader** — file plus environment overrides (ADR-0011).
   - **Logger** — wake and error lines (ADR-0010).
-- **Technology choices**: Go (ADR-0001); plain HTTP on a configured address with TLS left to the routing (ADR-0006); container with host networking (ADR-0003); a setuid-root command as the privilege boundary (ADR-0005).
-- **Per quality goal**: NFR-1 → hold with no deadline + bounded probe detection + wake trigger (ADR-0004, ADR-0007, ADR-0005). NFR-2 → direct forward with no pre-probe (ADR-0006, ADR-0008). NFR-3 → streaming relay (ADR-0001). NFR-4 → goroutine-per-held-connection with no deadline ever set (ADR-0001, ADR-0004). NFR-5 → unbounded held set with a tested floor of 8 (ADR-0012). NFR-6 → the four error paths are the only exits, each producing exactly one response (ADR-0009). NFR-7/NFR-8 → the setuid boundary and the container specification (ADR-0005, ADR-0003).
+- **Technology choices**: Go (ADR-0001); plain HTTP on a configured address with TLS left to the routing (ADR-0006); container with host networking (ADR-0003); an image-installed etherwake with a CAP_NET_RAW file capability as the privilege boundary (ADR-0016).
+- **Per quality goal**: NFR-1 → hold with no deadline + bounded probe detection + wake trigger (ADR-0004, ADR-0007, ADR-0016). NFR-2 → direct forward with no pre-probe (ADR-0006, ADR-0008). NFR-3 → streaming relay (ADR-0001). NFR-4 → goroutine-per-held-connection with no deadline ever set (ADR-0001, ADR-0004). NFR-5 → unbounded held set with a tested floor of 8 (ADR-0012). NFR-6 → the four error paths are the only exits, each producing exactly one response (ADR-0009). NFR-7/NFR-8 → the file-capability boundary and the container specification (ADR-0016, ADR-0003).
 
 ## 5. Building Block View
 
@@ -91,7 +91,7 @@
 |---|---|---|
 | tcp-wake (Go process in a container, ADR-0001, ADR-0003) | Wake-on-demand reverse proxy: hold hypha-bound requests while hypha is not healthy, wake it, and forward verbatim once it is | Ch-1 in/out; Ch-3 out; Ch-4 out/in; Ch-5 out; config in; log out |
 | Existing routing (pre-existing, ADR-0002) | Routes the hypha-bound requests to the system and leaves every other vhost alone | Ch-2 in |
-| Wake command (host file, setuid-root, ADR-0005) | Powers hypha on, once per invocation | exec in; exit status out |
+| etherwake (image file, cap_net_raw, ADR-0016) | Powers hypha on, once per invocation | exec in; exit status out |
 | Container runtime (host, ADR-0003) | Runs the system's container with host networking | process lifecycle |
 | hypha (host, normally off) | Serves the LLM API; answers `/health` when ready | Ch-3 in; Ch-4 in/out |
 
@@ -135,9 +135,9 @@
 #### Wake trigger
 
 - **Responsibility**: execute the configured command once for each triggering request, and report its exit status.
-- **Interfaces**: in — a request received while hypha is not healthy; out — one process execution (ADR-0005), an exit status, and one log line (ADR-0010); errors — a non-zero exit produces an immediate 500 naming the wake command (FR-17).
+- **Interfaces**: in — a request received while hypha is not healthy; out — one process execution (ADR-0016), an exit status, and one log line (ADR-0010); errors — a non-zero exit produces an immediate 500 naming the wake command (FR-17).
 - **Fulfils**: FR-3, FR-12, FR-17, IF-4, NFR-7.
-- **Open issues**: R-1 (a stripped setuid bit breaks the wake path).
+- **Open issues**: R-1 (a dropped file capability breaks the wake path).
 
 #### Probe
 
@@ -222,7 +222,7 @@
 | Block | Runs on | Notes |
 |---|---|---|
 | tcp-wake | hyperion — container, host networking | Unprivileged user; no elevated capabilities; restart on failure (ADR-0003) |
-| Wake command | hyperion — host file, bind-mounted into the container | mode 4755, root:root; must still carry the bit inside the container (ADR-0005, R-1) |
+| etherwake | in the tcp-wake image | carries `cap_net_raw=ep`; the container must preserve the file capability (ADR-0016, R-1) |
 | Existing routing | hyperion — pre-existing | one entry bound for hypha pointing at the configured listen address (ADR-0002) |
 | hypha | hypha host — normally off | `/health` is the readiness signal; the wake target is configuration |
 | Container runtime | hyperion — pre-existing | the same mechanism every other service on hyperion uses (ADR-0003) |
@@ -237,11 +237,11 @@ One text line per wake-command execution and one per error, on standard output (
 
 ### 8.2 Configuration
 
-One TOML file holding the full key set — `listen_address`, `target_address`, `health_path`, `probe_interval` (2s), `probe_timeout` (1s), `wait_bound` (120s), `wake_command`, `held_body_cap` (64MiB) — with environment-variable overrides (`TCPWAKE_<KEY>`) that win over the file (ADR-0013, ADR-0011). The file is located by `--config PATH`, else `$TCPWAKE_CONFIG`, else the fixed default `/etc/tcp-wake/config.toml`, with no working-directory fallback, so the same binary reads the same file wherever it starts (ADR-0015). `target_address` names hypha, the target of both the probe and every forward; "target" was chosen over "origin" because in a proxy "origin" reads from either direction. TOML rather than JSON because the file carries constraints that must be explained beside their values: the setuid requirement on `wake_command`, and the rule that `wait_bound` is measured from arrival and never restarted. Durations are Go duration strings and sizes take an IEC suffix, both validated at start. A missing, unreadable, or malformed file prevents start. The example file is `config.example.toml`. Touches Listener, Intake, Wake trigger, Probe, Wait-bound timer.
+One TOML file holding the full key set — `listen_address`, `target_address`, `health_path`, `probe_interval` (2s), `probe_timeout` (1s), `wait_bound` (120s), `wake_mac` (required), `wake_interface` (eth0), `held_body_cap` (64MiB) — with environment-variable overrides (`TCPWAKE_<KEY>`) that win over the file (ADR-0013, ADR-0011). The file is located by `--config PATH`, else `$TCPWAKE_CONFIG`, else the fixed default `/etc/tcp-wake/config.toml`, with no working-directory fallback, so the same binary reads the same file wherever it starts (ADR-0015). `target_address` names hypha, the target of both the probe and every forward; "target" was chosen over "origin" because in a proxy "origin" reads from either direction. TOML rather than JSON because the file carries constraints that must be explained beside their values: the file-capability requirement on the fixed etherwake binary, and the rule that `wait_bound` is measured from arrival and never restarted. Durations are Go duration strings and sizes take an IEC suffix, both validated at start. A missing, unreadable, or malformed file prevents start. The example file is `config.example.toml`. Touches Listener, Intake, Wake trigger, Probe, Wait-bound timer.
 
 ### 8.3 Privilege
 
-Only the wake command runs with elevated privileges: it is a setuid-root file, exec'd by the unprivileged proxy process (ADR-0005). The container must preserve the setuid bit, which the container specification alone cannot guarantee (ADR-0003, R-1). Touches Wake trigger. Verified by reading the command's mode from inside the running container, and the proxy process's uid (NFR-7, NFR-8).
+Only etherwake runs with elevated privileges: the image sets `cap_net_raw+ep` on `/usr/sbin/etherwake`, and the unprivileged proxy process execs it (ADR-0016). The container must preserve the file capability, which the container specification alone cannot guarantee (ADR-0003, R-1). Touches Wake trigger. Verified with `getcap` and by executing etherwake as the proxy user inside the running container, plus the proxy process's uid (NFR-7, NFR-8).
 
 ### 8.4 Error handling
 
@@ -277,7 +277,7 @@ Client authentication is not this system's job; the routing layer is the trust b
 | ADR-0002 | Dedicated listen address behind the existing routing | accepted | C-3, FR-1, FR-9 | 2026-09-23 |
 | ADR-0003 | Container with host networking | accepted | C-1, C-4, NFR-7, NFR-8 | 2026-09-23 |
 | ADR-0004 | Retain held requests as raw wire bytes under a cap | accepted | FR-2, FR-13, FR-14, FR-15, FR-20, NFR-4, NFR-5 | 2026-09-23 |
-| ADR-0005 | setuid-root wake command | accepted | C-4, FR-3, NFR-7, NFR-8 | 2026-09-23 |
+| ADR-0005 | setuid-root wake command | superseded | C-4, FR-3, NFR-7, NFR-8 | 2026-09-23 |
 | ADR-0006 | Plain HTTP on a configured address, TLS left to the existing routing | accepted | FR-13, IF-1, IF-2 | 2026-09-23 |
 | ADR-0007 | Probe cadence 2 s interval with a 1 s timeout | accepted | C-2, C-5, FR-10, FR-11, IF-3, NFR-1 | 2026-09-23 |
 | ADR-0008 | Trust the cached health state, and probe only after a transport failure | accepted | FR-1, FR-10, FR-11, FR-18, FR-19, NFR-2 | 2026-09-23 |
@@ -288,6 +288,7 @@ Client authentication is not this system's job; the routing layer is the trust b
 | ADR-0013 | TOML as the configuration format | accepted | IF-5 | 2026-09-23 |
 | ADR-0014 | Error response body schema | accepted | FR-8, FR-17, FR-18, FR-20, NFR-6 | 2026-09-26 |
 | ADR-0015 | Configuration file discovery and the `--config` flag | accepted | IF-5 | 2026-09-26 |
+| ADR-0016 | Fixed etherwake in the image with a NET_RAW file capability | accepted | C-4, FR-3, IF-5, NFR-7, NFR-8, R-1 | 2026-10-08 |
 <!-- adr-index:end -->
 
 ## 10. Quality Requirements
@@ -313,19 +314,19 @@ Client authentication is not this system's job; the routing layer is the trust b
 - **NFR-4**: source an auditor · stimulus inspection of the held connection's handling · environment a request held during a boot window · artifact the Listener and Intake · response no deadline is set on the connection · measure the absence of any read or write deadline in the connection-handling code.
 - **NFR-5**: source a client agent population · stimulus 8 concurrent requests arrive during one boot window · environment hypha powered off · artifact the Held set · response all 8 are held and later forwarded · measure none is discarded and all 8 receive hypha's response.
 - **NFR-6**: source the acceptance suite · stimulus every request the system accepts · environment the suite's full run · artifact the whole system · response exactly one response per request · measure the response count equals the accepted count minus the requests abandoned by their client.
-- **NFR-7**: source an auditor · stimulus inspection of the wake command's file mode and owner, read from inside the running container · environment the system deployed · artifact the Wake trigger and the container specification · response the command carries its elevated bit and is invoked · measure the mode is 4755 and owned by root after deployment.
+- **NFR-7**: source an auditor · stimulus inspection of the etherwake binary's file capability and an execution as the proxy user, read from inside the running container · environment the system deployed · artifact the Wake trigger and the container specification · response the binary carries its capability and is invoked · measure `getcap` reports `cap_net_raw=ep` and etherwake runs successfully after deployment.
 - **NFR-8**: source an auditor · stimulus inspection of the proxy process's uid and the container's capabilities · environment the system deployed · artifact the container specification · response the proxy runs unprivileged with no elevated capabilities · measure the process uid is not root and no elevated capability is granted.
 
 ## 11. Risks and Technical Debt
 
 | Risk | From (ADR / requirement) | Impact | Mitigation |
 |---|---|---|---|
-| R-1 — the container runtime strips the setuid bit from the wake command, so the wake path fails while the host's file mode still looks correct | ADR-0003, ADR-0005, NFR-7 | Every request while hypha is off gets a 500 — the outage this project exists to prevent | Verify the bit from inside the running container at deployment, not on the host; make that part of the deployment check |
+| R-1 — the container runtime drops or ignores the wake tool's file capability (for example with `no-new-privileges` or a storage driver that does not preserve xattrs), so the wake path fails | ADR-0003, ADR-0016, NFR-7 | Every request while hypha is off gets a 500 — the outage this project exists to prevent | Verify the capability from inside the running container at deployment; make that part of the deployment check |
 | R-2 — hypha's boot time grows beyond the ≈117 s of margin inside NFR-1's 120 s | ADR-0007, NFR-1, C-2 | The first response exceeds 120 s and the client gets a 504 | The bound is configuration, so it can be raised without a code change; if the boot time grows, NFR-1 needs revisiting |
 | R-3 — hypha's idle-shutdown races the wake path, powering hypha off while requests are held | §2 accepted risk, non-goal 1 | Held requests wait for a boot that keeps being undone, then 504 | Accepted, not mitigated — the two hosts do not communicate, so the system cannot observe it |
 | R-4 — a client stalls mid-body, so the request can never be forwarded and is held with no deadline | §2 non-goal 7, NFR-4, ADR-0004 | One held goroutine and its retained bytes are stuck indefinitely | Accepted: the spec puts connection timeouts out of scope. Detecting it would require a timeout, which NFR-4 forbids |
 | R-5 — the held set is uncapped, so growth has no defined behaviour | ADR-0012, NFR-5 | Memory exhaustion rather than a clean refusal, if the client population grows or a client retries in a loop | The body cap bounds each request; the client population is a couple of agents. If it grows, ADR-0012 should be revisited |
-| R-6 — a broken wake command fails every request immediately, which looks exactly like the outage this project prevents | FR-3, FR-17, ADR-0005 | Every hypha-bound request gets a 500 until the command is fixed | The 500 body names the wake command, so the cause is distinguishable from hypha being off; the deployment check in R-1 covers the common cause |
+| R-6 — a broken wake command fails every request immediately, which looks exactly like the outage this project prevents | FR-3, FR-17, ADR-0016 | Every hypha-bound request gets a 500 until the command is fixed | The 500 body names the wake command, so the cause is distinguishable from hypha being off; the deployment check in R-1 covers the common cause |
 | R-7 — the listener is plain HTTP, so reaching it from outside hyperion would expose prompts in the clear | ADR-0006, §2 non-goal 6 | Request bodies, including prompts and tokens, readable on the network | The listen address must not be externally reachable; the system itself does not enforce this |
 | R-8 — the first request after an out-of-band shutdown fails with a 502 | ADR-0008, FR-18, G1 | One error caused by hypha being off, which G1 otherwise excludes | Accepted in ADR-0008: the alternative, probing before every forward, adds a round trip to every healthy request and still does not close the window |
 | R-9 — adding Go and a second HTTP implementation widens hyperion's maintenance surface | ADR-0001 | Another toolchain and HTTP stack to keep patched alongside the existing routing layer | Accepted: this is the cost of a runtime that makes hold, parallel release, and streaming structural; the nginx-module alternative was worse |
@@ -346,7 +347,7 @@ Client authentication is not this system's job; the routing layer is the trust b
 | held request | a request accepted while hypha is not healthy and not yet answered |
 | wait bound | the configured maximum time a request is held, measured from its arrival (FR-8) |
 | held body cap | the configured maximum request body the system retains, 64 MiB by default (FR-20) |
-| wake command | the configured setuid-root command the system executes to power hypha on (ADR-0005) |
+| wake command | the fixed etherwake invocation with `CAP_NET_RAW` the system executes to power hypha on (ADR-0016) |
 | release | the moment the state becomes healthy and every held request is forwarded (FR-4, FR-5) |
 | reference network | hyperion and hypha on the same LAN, with no other traffic |
 | the system | tcp-wake: the reverse-proxy service on hyperion, not the routing layer, not hypha |
@@ -359,7 +360,7 @@ Client authentication is not this system's job; the routing layer is the trust b
 |---|---|
 | FR-1 | Listener + Forwarder, ADR-0006 |
 | FR-2 | Held set + Intake, ADR-0004 |
-| FR-3 | Wake trigger, ADR-0005 |
+| FR-3 | Wake trigger (etherwake), ADR-0016 |
 | FR-4 | Forwarder release, ADR-0004 |
 | FR-5 | Forwarder, one connection per held request, ADR-0001 |
 | FR-6 | Held set, ADR-0004 |
@@ -380,7 +381,7 @@ Client authentication is not this system's job; the routing layer is the trust b
 | IF-1 | Listener, ADR-0006 |
 | IF-2 | Forwarder, ADR-0004 |
 | IF-3 | Probe, ADR-0007 |
-| IF-4 | Wake trigger, ADR-0005 |
+| IF-4 | Wake trigger (etherwake), ADR-0016 |
 | IF-5 | Config loader, ADR-0011 + ADR-0013 |
 | IF-6 | Logger, ADR-0010 |
 | NFR-1 | Held set + Probe + Wake trigger, ADR-0007 |
@@ -389,5 +390,5 @@ Client authentication is not this system's job; the routing layer is the trust b
 | NFR-4 | Listener + Intake, no deadline, ADR-0001 |
 | NFR-5 | Held set, ADR-0012 |
 | NFR-6 | Four error paths, ADR-0009 |
-| NFR-7 | Wake trigger setuid boundary, ADR-0005 |
-| NFR-8 | Container specification, ADR-0003 + ADR-0005 |
+| NFR-7 | Wake trigger file-capability boundary, ADR-0016 |
+| NFR-8 | Container specification, ADR-0003 + ADR-0016 |
