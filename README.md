@@ -1,10 +1,16 @@
 # tcp-wake
 
-A reverse-proxy service on **hyperion** that holds requests to **hypha** while it
-is powered off, runs `etherwake`, polls hypha's health endpoint, and forwards
-each held request verbatim once hypha is ready. A client never sees an error
-caused by hypha being off (except the one accepted case in [Accepted
+A reverse-proxy service on an always on server that holds requests to an on demand server
+while it is powered off, runs `etherwake`, polls the on demand server its health endpoint, and forwards
+each held request verbatim once the on demand server is ready. A client never sees an error
+caused by the on demand server being off (except the one accepted case in [Accepted
 risks](#accepted-risks-do-not-fix-these)).
+
+During development the servers are named hyperion for the always on server and hypha for the on demand server to simplify documentation.
+
+> [!WARNING]
+> Almost everything in this repo has been written by AI (deepseek v4.1). I have not looked at the code at all.
+> I did test this end to end and am using this currently to boot my llama.cpp host on demand.
 
 - Requirement baseline: `docs/specs/SRS.md` v0.3
 - Architecture and all 18 ADRs: `docs/architecture.md`, `docs/adr/`
@@ -13,7 +19,7 @@ risks](#accepted-risks-do-not-fix-these)).
 ## How it works
 
 ```
-client ──▶ existing routing ──▶ tcp-wake ──▶ hypha
+client ──▶ existing routing ──▶ tcp-wake ──▶ on demand server
               (TLS, auth)         │  hold, wake, probe, forward
                                   └── exec etherwake (CAP_NET_RAW)
 ```
@@ -23,7 +29,7 @@ networking. On every request it **tries the target first**, with the upstream
 connect bounded by `probe_timeout`. If the target answers, that response is
 relayed and no wake runs; if the connect fails, the target is treated as off:
 the request is held open with **no deadline and no response bytes** and one
-`etherwake` execution is triggered. Once hypha is ready every held request is
+`etherwake` execution is triggered. Once the on demand server is ready every held request is
 forwarded.
 A goroutine probes `GET /health` while a request waits. On the first ready
 answer every held request opens its own upstream connection and is forwarded
@@ -47,8 +53,8 @@ error. No request or response content is written (ADR-0010, ADR-0017).
 
 ## Build and deploy
 
-Prerequisites on hyperion: Docker with the Compose plugin, the target's MAC
-address, and a reachable hypha address.
+Prerequisites on always on server: Docker with the Compose plugin, the target's MAC
+address, and a reachable on demand server address.
 
 ```bash
 git clone <repo> && cd tcp-wake
@@ -79,7 +85,7 @@ restart discards all held state (FR-16).
 
 ## The routing entry to add
 
-Add exactly **one** route for hypha and change nothing else (ADR-0002, FR-9).
+Add exactly **one** route for the the on demand server and change nothing else (ADR-0002, FR-9).
 The route's upstream is `listen_address` from the config, over plain HTTP. TLS
 termination and client authentication stay at the routing layer (ADR-0006,
 §2 non-goal 6).
@@ -95,7 +101,7 @@ location / {
 ```
 
 Keep this route and `listen_address` in step (R-10). `listen_address` **must not**
-be reachable from outside hyperion, or prompts travel in the clear (R-7).
+be reachable from outside always on server, or prompts travel in the clear (R-7).
 
 ## Configuration
 
@@ -107,7 +113,7 @@ is the annotated example and `config.toml.example` the short one.
 | Key | Default | Meaning |
 |---|---|---|
 | `listen_address` | `127.0.0.1:8080` | address the routing layer forwards to |
-| `target_address` | `http://hypha.lan:8080` | hypha, target of the probe and every forward |
+| `target_address` | `http://hypha.lan:8080` | target of the probe and every forward |
 | `health_path` | `/health` | path probed; ready is `200 {"status":"ok"}` (IF-3) |
 | `probe_interval` | `2s` | probe cadence while a request is pending (ADR-0007) |
 | `probe_timeout` | `1s` | per-probe timeout |
@@ -139,8 +145,8 @@ python3 scripts/check_traceability.py docs/specs/SRS.md docs/architecture.md
 - [ ] `TestNFR4NoDeadlineCallsInSource` passes: no `SetDeadline`,
       `SetReadDeadline`, or `SetWriteDeadline` in the non-test proxy sources.
 - [ ] `TestNFR4ListenerSetsNoDeadline` passes: a deadline spy sees no deadline.
-- [ ] Manual: with hypha off, open a connection to `listen_address`, send a
-      request, and confirm it receives zero bytes until hypha reports healthy.
+- [ ] Manual: with the on demand server off, open a connection to `listen_address`, send a
+      request, and confirm it receives zero bytes until the on demand server reports healthy.
       Do **not** add a connection timeout to "fix" a stuck request (non-goal 7).
 
 ### Inspection checklist — NFR-7 (the wake command gets its privilege)
@@ -168,12 +174,12 @@ requirement or an ADR. The full risk table is `docs/architecture.md` §11.
 
 | Accepted behaviour | Why it must stay |
 |---|---|
-| A held request has **no connection timeout** | NFR-4 and §2 non-goal 7; timeouts belong to hypha and the routing layer |
+| A held request has **no connection timeout** | NFR-4 and §2 non-goal 7; timeouts belong to the on demand server and the routing layer |
 | A client that stalls mid-body can be held indefinitely (R-4) | Detecting it needs a timeout, which NFR-4 forbids |
 | The held set is **uncapped** (ADR-0012) | NFR-5 requires at least 8; growth is bounded by the client population, and the body cap bounds each request |
 | The system holds **nothing across a restart** (FR-16) | §2 non-goal 5; restart closes held connections rather than replaying them |
 | Request/response bodies are **never logged** (ADR-0010) | §2 non-goal 3; logging them would write prompts and tokens to disk |
-| hypha's idle-shutdown can race a wake (R-3) | The two hosts do not communicate; accepted, not mitigated |
+| the on demand server's idle-shutdown can race a wake (R-3) | The two hosts do not communicate; accepted, not mitigated |
 | The wake command is **fixed to `etherwake`** (ADR-0016) | A different mechanism needs a code change; that is the accepted cost of reducing wake configuration to a MAC address |
 | TLS and client authentication are **not** here | ADR-0006 and §2 non-goal 6; the routing layer is the trust boundary |
 
