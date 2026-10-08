@@ -192,6 +192,7 @@ type system struct {
 	listener *Listener
 	log      *syncBuffer
 	wakeRec  string
+	wakeCmd  string
 	addr     string
 
 	cancel context.CancelFunc
@@ -240,10 +241,9 @@ func newSystem(t *testing.T, opts systemOptions) *system {
 		ProbeInterval: probeInterval,
 		ProbeTimeout:  100 * time.Millisecond,
 		WaitBound:     waitBound,
-		WakeCommand:   wakeCmd,
 		HeldBodyCap:   heldCap,
 	}
-	return startSystem(t, cfg, target, wakeRec)
+	return startSystem(t, cfg, target, wakeRec, wakeCmd)
 }
 
 // restart tears the system down and returns a fresh one with the same
@@ -257,12 +257,12 @@ func (s *system) restart() *system {
 	case <-time.After(2 * time.Second):
 		s.t.Fatal("system did not stop on restart")
 	}
-	return startSystem(s.t, s.cfg, s.target, s.wakeRec)
+	return startSystem(s.t, s.cfg, s.target, s.wakeRec, s.wakeCmd)
 }
 
 // startSystem wires one instance of the request path. It is split out so
 // restart can build a second instance with the same config and target.
-func startSystem(t *testing.T, cfg *config.Config, target *fakeTarget, wakeRec string) *system {
+func startSystem(t *testing.T, cfg *config.Config, target *fakeTarget, wakeRec, wakeCmd string) *system {
 	t.Helper()
 	log := &syncBuffer{}
 	health := NewHealth()
@@ -272,7 +272,7 @@ func startSystem(t *testing.T, cfg *config.Config, target *fakeTarget, wakeRec s
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	pipeline := NewPipeline(ctx, cfg.WaitBound, health, prober, NewWakeTrigger(cfg), forwarder, NewLogger(log))
+	pipeline := NewPipeline(ctx, cfg.WaitBound, health, prober, &WakeTrigger{command: wakeCmd}, forwarder, NewLogger(log))
 	listener := NewListener(cfg, pipeline.Handle, NewLogger(log))
 
 	addrCh := make(chan string, 1)
@@ -298,7 +298,7 @@ func startSystem(t *testing.T, cfg *config.Config, target *fakeTarget, wakeRec s
 	s := &system{
 		t: t, target: target, cfg: cfg,
 		health: health, prober: prober, pipeline: pipeline, listener: listener,
-		log: log, wakeRec: wakeRec, addr: addr,
+		log: log, wakeRec: wakeRec, wakeCmd: wakeCmd, addr: addr,
 		cancel: cancel, done: done,
 	}
 	t.Cleanup(s.cancel)

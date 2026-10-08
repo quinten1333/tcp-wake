@@ -31,6 +31,14 @@ func writeConfig(t *testing.T, content string) string {
 
 func loadContent(t *testing.T, content string, env map[string]string) (*Config, error) {
 	t.Helper()
+	// wake_mac is required (ADR-0016) but irrelevant to most tests, so it is
+	// appended when the content and environment do not already set it.
+	// TestWakeMACIsRequired bypasses this helper to prove the requirement.
+	if !strings.Contains(content, "wake_mac") {
+		if _, overridden := env["TCPWAKE_WAKE_MAC"]; !overridden {
+			content += "\nwake_mac = \"AA:BB:CC:DD:EE:FF\"\n"
+		}
+	}
 	e := nopEnv
 	if env != nil {
 		e = envFrom(env)
@@ -48,7 +56,9 @@ func mustLoad(t *testing.T, content string, env map[string]string) *Config {
 }
 
 func TestLoadDefaults(t *testing.T) {
-	cfg := mustLoad(t, "# no keys\n", nil)
+	// wake_mac is required, so a minimal valid file sets it; every other key
+	// falls back to its default.
+	cfg := mustLoad(t, `wake_mac = "AA:BB:CC:DD:EE:FF"`+"\n", nil)
 
 	if cfg.ListenAddress != "127.0.0.1:8080" {
 		t.Errorf("ListenAddress = %q", cfg.ListenAddress)
@@ -68,11 +78,27 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.WaitBound != 120*time.Second {
 		t.Errorf("WaitBound = %v", cfg.WaitBound)
 	}
-	if cfg.WakeCommand != "/usr/local/bin/wol-send" {
-		t.Errorf("WakeCommand = %q", cfg.WakeCommand)
+	if cfg.WakeInterface != "eth0" {
+		t.Errorf("WakeInterface = %q, want the eth0 default", cfg.WakeInterface)
+	}
+	if cfg.WakeMAC != "AA:BB:CC:DD:EE:FF" {
+		t.Errorf("WakeMAC = %q", cfg.WakeMAC)
 	}
 	if cfg.HeldBodyCap != ByteSize(64*1024*1024) {
 		t.Errorf("HeldBodyCap = %d", cfg.HeldBodyCap)
+	}
+}
+
+// TestWakeMACIsRequired proves the MAC has no default: a file that does not set
+// it prevents start. It bypasses loadContent, which injects a MAC for other
+// tests.
+func TestWakeMACIsRequired(t *testing.T) {
+	_, err := Load([]string{"--config", writeConfig(t, "# no wake_mac\n")}, nopEnv)
+	if err == nil {
+		t.Fatal("expected an error when wake_mac is absent")
+	}
+	if !strings.Contains(err.Error(), "wake_mac") {
+		t.Errorf("error %q does not name wake_mac", err)
 	}
 }
 
@@ -100,8 +126,16 @@ func TestDefaultsMatchExampleFile(t *testing.T) {
 				t.Fatalf("example file has keys absent from rawConfig: %v", und)
 			}
 
-			if want := defaultRaw(); fromFile != want {
-				t.Errorf("example file values = %+v\ncode defaults      = %+v", fromFile, want)
+			// wake_mac has no default (it is required), so the example's
+			// placeholder cannot equal defaultRaw()'s empty value. Compare the
+			// defaults with the MAC zeroed, and require a non-empty placeholder.
+			got := fromFile
+			got.WakeMAC = ""
+			if want := defaultRaw(); got != want {
+				t.Errorf("example file values = %+v\ncode defaults      = %+v", got, want)
+			}
+			if fromFile.WakeMAC == "" {
+				t.Error("example file must show a non-empty wake_mac placeholder")
 			}
 		})
 	}
@@ -168,11 +202,20 @@ func TestLoadEachKeyFromFile(t *testing.T) {
 			},
 		},
 		{
-			"wake_command",
-			`wake_command = "/usr/local/bin/other"`,
+			"wake_mac",
+			`wake_mac = "00:11:22:33:44:55"`,
 			func(t *testing.T, c *Config) {
-				if c.WakeCommand != "/usr/local/bin/other" {
-					t.Errorf("WakeCommand = %q", c.WakeCommand)
+				if c.WakeMAC != "00:11:22:33:44:55" {
+					t.Errorf("WakeMAC = %q", c.WakeMAC)
+				}
+			},
+		},
+		{
+			"wake_interface",
+			`wake_interface = "enp1s0"`,
+			func(t *testing.T, c *Config) {
+				if c.WakeInterface != "enp1s0" {
+					t.Errorf("WakeInterface = %q", c.WakeInterface)
 				}
 			},
 		},
@@ -416,7 +459,8 @@ health_path    = "/readyz"
 probe_interval = "3s"
 probe_timeout  = "2s"
 wait_bound     = "9s"
-wake_command   = "/bin/wake"
+wake_mac       = "AA:BB:CC:DD:EE:FF"
+wake_interface = "enp1s0"
 held_body_cap  = "1KiB"
 `, nil)
 
@@ -426,7 +470,8 @@ held_body_cap  = "1KiB"
 		cfg.ProbeInterval != 3*time.Second ||
 		cfg.ProbeTimeout != 2*time.Second ||
 		cfg.WaitBound != 9*time.Second ||
-		cfg.WakeCommand != "/bin/wake" ||
+		cfg.WakeMAC != "AA:BB:CC:DD:EE:FF" ||
+		cfg.WakeInterface != "enp1s0" ||
 		cfg.HeldBodyCap != ByteSize(1024) {
 		t.Fatalf("the file's keys were not all applied: %+v", cfg)
 	}

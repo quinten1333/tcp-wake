@@ -108,10 +108,8 @@ func TestADR0010OneWakeAndOneErrorLine(t *testing.T) {
 			"500 wake_command",
 			func(t *testing.T, log *syncBuffer) *Pipeline {
 				health := NewHealth()
-				cfg := testConfig()
-				cfg.WakeCommand = failingCommand(t, 3)
 				return NewPipeline(context.Background(), time.Hour, health,
-					notReadyProber(t, health), NewWakeTrigger(cfg),
+					notReadyProber(t, health), &WakeTrigger{command: failingCommand(t, 3)},
 					testForwarder(t, "http://127.0.0.1:1"), NewLogger(log))
 			},
 			1, 1,

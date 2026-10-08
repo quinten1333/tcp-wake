@@ -10,14 +10,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
 
 // stubCommand writes an executable shell script and returns its path. Tests
-// point wake_command at it; the setuid bit is a deployment concern (T1, T14,
-// T15), not something a test needs.
+// substitute it for the fixed etherwake binary to count or fail executions; the
+// file-capability check is a deployment concern (T15, scripts/check-deploy.sh),
+// not something a test needs.
 func stubCommand(t *testing.T, body string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "cmd.sh")
@@ -120,21 +122,35 @@ func TestWakeExecIsNotShellSplit(t *testing.T) {
 	}
 }
 
-// TestNFR7TriggerExecsConfiguredFile covers the trigger's half of NFR-7: it
-// invokes exactly the configured file as a child process. The privilege check
-// itself is the deployment inspection owned by T14/T15.
-func TestNFR7TriggerExecsConfiguredFile(t *testing.T) {
-	path, record := recordingCommand(t)
-	tr := &WakeTrigger{command: path}
+// TestNFR7TriggerExecsEtherwake covers the trigger's half of NFR-7: it invokes
+// the fixed etherwake binary with the configured interface and MAC as argv. The
+// capability check itself is the deployment inspection owned by T15 and
+// scripts/check-deploy.sh.
+func TestNFR7TriggerExecsEtherwake(t *testing.T) {
+	cfg := testConfig()
+	cfg.WakeMAC = "00:11:22:33:44:55"
+	cfg.WakeInterface = "enp1s0"
+	tr := NewWakeTrigger(cfg)
 
-	if tr.Command() != path {
-		t.Fatalf("Command() = %q, want the configured %q", tr.Command(), path)
+	if tr.command != etherwakePath {
+		t.Fatalf("command = %q, want the fixed %q", tr.command, etherwakePath)
 	}
-	if res := tr.Run(context.Background()); res.Err != nil {
+	want := []string{"-i", "enp1s0", "00:11:22:33:44:55"}
+	if !reflect.DeepEqual(tr.args, want) {
+		t.Fatalf("args = %v, want %v", tr.args, want)
+	}
+	if got := tr.Command(); got != etherwakePath+" -i enp1s0 00:11:22:33:44:55" {
+		t.Fatalf("Command() = %q", got)
+	}
+
+	// A stub can be substituted for the binary to prove an execution happens.
+	path, record := recordingCommand(t)
+	stub := &WakeTrigger{command: path}
+	if res := stub.Run(context.Background()); res.Err != nil {
 		t.Fatalf("Run returned %v", res.Err)
 	}
 	if got := countLines(record); got != 1 {
-		t.Fatalf("configured file ran %d time(s), want 1", got)
+		t.Fatalf("wake command ran %d time(s), want 1", got)
 	}
 }
 
@@ -144,9 +160,9 @@ func TestIF6OneLogLinePerExecution(t *testing.T) {
 	var buf bytes.Buffer
 	logger := NewLogger(&buf)
 
-	logger.Wake("/usr/local/bin/wol-send", WakeResult{ExitCode: 0})
-	logger.Wake("/usr/local/bin/wol-send", WakeResult{ExitCode: 3, Err: fmt.Errorf("exit 3")})
-	logger.Wake("/usr/local/bin/wol-send", WakeResult{ExitCode: -1, Err: fmt.Errorf("not found")})
+	logger.Wake(etherwakePath+" -i eth0 00:11:22:33:44:55", WakeResult{ExitCode: 0})
+	logger.Wake(etherwakePath+" -i eth0 00:11:22:33:44:55", WakeResult{ExitCode: 3, Err: fmt.Errorf("exit 3")})
+	logger.Wake(etherwakePath+" -i eth0 00:11:22:33:44:55", WakeResult{ExitCode: -1, Err: fmt.Errorf("not found")})
 
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 	if len(lines) != 3 {
@@ -167,10 +183,8 @@ func TestIF6OneLogLinePerExecution(t *testing.T) {
 func TestFR12NoExecWhileIdle(t *testing.T) {
 	cmd, record := recordingCommand(t)
 	health := NewHealth()
-	cfg := testConfig()
-	cfg.WakeCommand = cmd
 	prober := stubProber(health, time.Hour, func(context.Context) bool { return false })
-	pl := NewPipeline(context.Background(), time.Hour, health, prober, NewWakeTrigger(cfg), testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
+	pl := NewPipeline(context.Background(), time.Hour, health, prober, &WakeTrigger{command: cmd}, testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
 	defer prober.Close()
 
 	// The pipeline exists and the probe stub is live, but no request is
@@ -187,11 +201,9 @@ func TestFR12NoExecWhileIdle(t *testing.T) {
 func TestFR3FiveRequestsProduceFiveExecutions(t *testing.T) {
 	cmd, record := recordingCommand(t)
 	health := NewHealth()
-	cfg := testConfig()
-	cfg.WakeCommand = cmd
 	prober := stubProber(health, time.Hour, func(context.Context) bool { return false })
 	logBuf := &syncBuffer{}
-	pl := NewPipeline(context.Background(), time.Hour, health, prober, NewWakeTrigger(cfg), testForwarder(t, "http://127.0.0.1:1"), NewLogger(logBuf))
+	pl := NewPipeline(context.Background(), time.Hour, health, prober, &WakeTrigger{command: cmd}, testForwarder(t, "http://127.0.0.1:1"), NewLogger(logBuf))
 	defer prober.Close()
 
 	const n = 5
@@ -225,14 +237,12 @@ func TestFR3FiveRequestsProduceFiveExecutions(t *testing.T) {
 func TestFR17ClientGets500NamingWakeCommand(t *testing.T) {
 	cmd := failingCommand(t, 3)
 	health := NewHealth()
-	cfg := testConfig()
-	cfg.WakeCommand = cmd
 	prober := stubProber(health, time.Hour, func(context.Context) bool { return false })
 	defer prober.Close()
 	logBuf := &syncBuffer{}
-	pl := NewPipeline(context.Background(), time.Hour, health, prober, NewWakeTrigger(cfg), testForwarder(t, "http://127.0.0.1:1"), NewLogger(logBuf))
+	pl := NewPipeline(context.Background(), time.Hour, health, prober, &WakeTrigger{command: cmd}, testForwarder(t, "http://127.0.0.1:1"), NewLogger(logBuf))
 
-	_, addr := startListener(t, cfg, pl.Handle)
+	_, addr := startListener(t, testConfig(), pl.Handle)
 
 	conn := get(t, addr)
 	defer conn.Close()

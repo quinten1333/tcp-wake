@@ -18,12 +18,11 @@ func newPipePending(t *testing.T) (*Pending, net.Conn) {
 }
 
 // wakeStub is a wake trigger for a command that exits cleanly, so the FR-8
-// tests exercise the wait path rather than the FR-17 failure path.
+// tests exercise the wait path rather than the FR-17 failure path. It
+// substitutes a stub for the fixed etherwake binary (ADR-0016).
 func wakeStub(t *testing.T) *WakeTrigger {
 	t.Helper()
-	cfg := testConfig()
-	cfg.WakeCommand = stubCommand(t, "#!/bin/sh\nexit 0\n")
-	return NewWakeTrigger(cfg)
+	return &WakeTrigger{command: stubCommand(t, "#!/bin/sh\nexit 0\n")}
 }
 
 // handled tracks one Handle call running against a client that reads its
@@ -243,10 +242,8 @@ func TestFR8HealthyBeforeBoundForwards(t *testing.T) {
 // still answers immediately (FR-17) even with a long wait bound.
 func TestFR8WakeFailureDoesNotWait(t *testing.T) {
 	health := NewHealth()
-	cfg := testConfig()
-	cfg.WakeCommand = failingCommand(t, 3)
 	pl := NewPipeline(context.Background(), 10*time.Second, health,
-		notReadyProber(t, health), NewWakeTrigger(cfg), testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
+		notReadyProber(t, health), &WakeTrigger{command: failingCommand(t, 3)}, testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
 
 	p, client := newPipePending(t)
 	h := startHandle(pl, p, client)

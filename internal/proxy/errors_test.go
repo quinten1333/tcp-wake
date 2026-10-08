@@ -184,11 +184,10 @@ func TestADR0014ErrorBodySchema(t *testing.T) {
 	})
 
 	t.Run("500 wake_command", func(t *testing.T) {
+		cmd := failingCommand(t, 3)
 		health := NewHealth()
-		cfg := testConfig()
-		cfg.WakeCommand = failingCommand(t, 3)
 		pl := NewPipeline(context.Background(), time.Hour, health,
-			notReadyProber(t, health), NewWakeTrigger(cfg),
+			notReadyProber(t, health), &WakeTrigger{command: cmd},
 			testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
 		p, counter := countingPending(t)
 
@@ -205,8 +204,8 @@ func TestADR0014ErrorBodySchema(t *testing.T) {
 		if detail.Message == "" {
 			t.Error("message is empty")
 		}
-		if !strings.Contains(detail.Message, cfg.WakeCommand) {
-			t.Errorf("message %q does not name the wake command %q", detail.Message, cfg.WakeCommand)
+		if !strings.Contains(detail.Message, cmd) {
+			t.Errorf("message %q does not name the wake command %q", detail.Message, cmd)
 		}
 		if detail.Limit != "" {
 			t.Errorf("limit = %q, want empty for an unbounded condition", detail.Limit)
@@ -298,10 +297,8 @@ func TestNFR6ExactlyOneResponsePerAcceptedRequest(t *testing.T) {
 		}},
 		{"500 wake_command", func(t *testing.T) *Pipeline {
 			health := NewHealth()
-			cfg := testConfig()
-			cfg.WakeCommand = failingCommand(t, 3)
 			return NewPipeline(context.Background(), time.Hour, health,
-				notReadyProber(t, health), NewWakeTrigger(cfg),
+				notReadyProber(t, health), &WakeTrigger{command: failingCommand(t, 3)},
 				testForwarder(t, "http://127.0.0.1:1"), NewLogger(io.Discard))
 		}},
 		{"502 target", func(t *testing.T) *Pipeline {

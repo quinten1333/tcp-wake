@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -238,9 +237,15 @@ func TestNFR3StreamedChunkLatencyUnder50ms(t *testing.T) {
 func TestNFR8NoPrivilegeEscalationInSource(t *testing.T) {
 	banned := []string{"Setuid", "Setgid", "Setgroups", "syscall.Credential", "CAP_"}
 	scanNonTestSources(t, func(name string, data []byte) {
-		for _, b := range banned {
-			if bytes.Contains(data, []byte(b)) {
-				t.Errorf("%s contains %s: the proxy must run without elevated privileges (NFR-8)", name, b)
+		for i, line := range strings.Split(string(data), "\n") {
+			// Ignore comments: naming a capability is not requesting one.
+			if j := strings.Index(line, "//"); j >= 0 {
+				line = line[:j]
+			}
+			for _, b := range banned {
+				if strings.Contains(line, b) {
+					t.Errorf("%s:%d contains %s: the proxy must run without elevated privileges (NFR-8)", name, i+1, b)
+				}
 			}
 		}
 	})

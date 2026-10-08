@@ -34,7 +34,10 @@ type Config struct {
 	ProbeInterval time.Duration
 	ProbeTimeout  time.Duration
 	WaitBound     time.Duration
-	WakeCommand   string
+	// WakeMAC is the target's MAC address, required (ADR-0016).
+	WakeMAC string
+	// WakeInterface is the interface etherwake sends on, default eth0 (ADR-0016).
+	WakeInterface string
 	HeldBodyCap   ByteSize
 }
 
@@ -49,7 +52,8 @@ type rawConfig struct {
 	ProbeInterval string `toml:"probe_interval"`
 	ProbeTimeout  string `toml:"probe_timeout"`
 	WaitBound     string `toml:"wait_bound"`
-	WakeCommand   string `toml:"wake_command"`
+	WakeMAC       string `toml:"wake_mac"`
+	WakeInterface string `toml:"wake_interface"`
 	HeldBodyCap   string `toml:"held_body_cap"`
 }
 
@@ -62,7 +66,8 @@ func defaultRaw() rawConfig {
 		ProbeInterval: "2s",
 		ProbeTimeout:  "1s",
 		WaitBound:     "120s",
-		WakeCommand:   "/usr/local/bin/wol-send",
+		WakeMAC:       "", // required; no default
+		WakeInterface: "eth0",
 		HeldBodyCap:   "64MiB",
 	}
 }
@@ -83,7 +88,8 @@ func keyFields(raw *rawConfig) []keyField {
 		{"probe_interval", &raw.ProbeInterval},
 		{"probe_timeout", &raw.ProbeTimeout},
 		{"wait_bound", &raw.WaitBound},
-		{"wake_command", &raw.WakeCommand},
+		{"wake_mac", &raw.WakeMAC},
+		{"wake_interface", &raw.WakeInterface},
 		{"held_body_cap", &raw.HeldBodyCap},
 	}
 }
@@ -189,7 +195,8 @@ func parse(raw *rawConfig) (*Config, error) {
 		ProbeInterval: probeInterval,
 		ProbeTimeout:  probeTimeout,
 		WaitBound:     waitBound,
-		WakeCommand:   raw.WakeCommand,
+		WakeMAC:       raw.WakeMAC,
+		WakeInterface: raw.WakeInterface,
 		HeldBodyCap:   heldBodyCap,
 	}, nil
 }
